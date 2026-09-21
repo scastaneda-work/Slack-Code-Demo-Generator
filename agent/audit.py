@@ -57,8 +57,8 @@ async def audit_log(client: AsyncWebClient, message: str) -> None:
 
     Reads AUDIT_CHANNEL_ID from env. If unset, silently no-ops (so dev runs
     without the env var don't break). Neutralizes user @-mentions to non-pinging
-    `~Name` and masks a literal 'Jennifer' — audit noise should never ping a live
-    demo user.
+    `~Name` and masks the DEMO_ADMIN_NAME (if set) — audit noise should never
+    ping a live demo user.
     """
     channel = os.environ.get("AUDIT_CHANNEL_ID")
     if not channel:
