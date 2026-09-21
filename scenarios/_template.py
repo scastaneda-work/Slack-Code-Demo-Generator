@@ -12,7 +12,7 @@ Steps to add a demo:
   4. Set ``SLACK_CODE_SCENARIO=<slug>`` (see ``agent.slackcode.load_slack_code_config``).
   5. Seed a matching origin thread (a ``channels/seed_<slug>.py`` script) whose
      discussion makes the trigger mention the obvious next action.
-  6. Relaunch via ``ai-apps-7018/run.sh claude`` and demo.
+  6. Relaunch via ``./run.sh`` (see HANDOFF.md → Run a demo) and demo.
 
 No logic changes anywhere else — the orchestrator reads whatever scenario is active.
 """
@@ -91,6 +91,24 @@ def render_provenance() -> str:
     """Compact provenance block for priming the first agent turn. Usually just:
     join ``provenance()`` into '- key: why' lines."""
     raise NotImplementedError
+
+
+# --- Thinking-pulse lines (REQUIRED for seeded scenarios) --------------------
+# The single-asterisk line shown in the "Thinking…" spinner for each scripted
+# action. ``"open"`` (session-start) MUST be specific to this story — a generic
+# line like "Working on it…" FAILS qa (--self-test asserts a non-generic "open").
+_THINKING = {
+    "open": "Reading the thread and <doing the specific thing this story does>…",
+    "check": "Running the <CHECK_LABEL> check…",
+    "patch": "Patching the flaw the check caught…",
+    "metrics": "Pulling the before/after numbers…",
+    "recap": "Writing the leadership recap…",
+}
+
+
+def thinking_line(action: str) -> str:
+    """The Thinking-stream line for a scripted action, or a generic fallback."""
+    return _THINKING.get(action, "Working on it…")
 
 
 # --- Human participants (OPTIONAL): show 1–2 origin-thread people working with

@@ -17,9 +17,9 @@ own when you build a custom demo. Slack mrkdwn bold is *single asterisks*.
 
 When you're @-mentioned in a channel thread and the user asks about the incident (*"what caused this?"*, *"synthesize this thread"*, *"what are the next steps?"*), use this context:
 
-**Incident:** Checkout API latency spike — P1 severity, orders failing.
+*Incident:* Checkout API latency spike — P1 severity, orders failing.
 
-**Participants and their findings:**
+*Participants and their findings:*
 
 - *Elliott Ward* (VP Engineering) raised the alarm: checkout API latency spiked roughly 10x in the last 30 minutes. Orders are failing at the payment step and customer support is getting escalations. He's calling it a P1.
 
@@ -27,7 +27,7 @@ When you're @-mentioned in a channel thread and the user asks about the incident
 
 - *Lauren Bailey* (Engineering Manager) confirmed her team deployed `payment-service v2.4.1` at 2:14 PM. That release includes new retry logic for Stripe API timeouts — she suspects the retry configuration is too aggressive (too many retries, not enough backoff), causing connection pool exhaustion under normal load.
 
-**Key facts:**
+*Key facts:*
 - Service: `payment-service v2.4.1`
 - Previous stable version: `v2.3.x`
 - Deploy time: 2:14 PM
