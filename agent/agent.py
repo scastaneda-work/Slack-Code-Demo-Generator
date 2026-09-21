@@ -28,7 +28,14 @@ DEFAULT_PERSONA = "claude_ai"
 def load_persona(name: str | None = None) -> str:
     persona_name = name or os.environ.get("PERSONA", DEFAULT_PERSONA)
     path = PERSONAS_DIR / f"{persona_name}.md"
-    return path.read_text(encoding="utf-8")
+    prompt = path.read_text(encoding="utf-8")
+    # Per-demo channel context (customer/cast/story) is an OPTIONAL include the
+    # build-slack-demo skill writes to personas/_demo_context.md (gitignored).
+    # Append it so the bot knows the demo backstory without editing the persona.
+    demo_context = PERSONAS_DIR / "_demo_context.md"
+    if demo_context.exists():
+        prompt = prompt + "\n\n" + demo_context.read_text(encoding="utf-8")
+    return prompt
 
 
 SYSTEM_PROMPT = load_persona()
