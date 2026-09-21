@@ -1,0 +1,14 @@
+{
+  "team_id": "PASTE-WORKSPACE-TEAM-ID",
+  "workspace_id": "PASTE-ENTERPRISE-OR-WORKSPACE-ID",
+  "audit_channel_id": "",
+  "bots": {
+    "PASTE-APP-ID": {
+      "name": "Claude AI",
+      "bot_token": "xoxb-PASTE-BOT-TOKEN",
+      "bot_user_id": "PASTE-BOT-USER-ID",
+      "app_token": "xapp-PASTE-APP-TOKEN"
+    }
+  },
+  "users": {}
+}
