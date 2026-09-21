@@ -35,10 +35,17 @@ Ask, don't assume:
 2. **Product / domain** the demo centers on.
 3. **The technical change** Claude will appear to make (a redesign, a refactor,
    an incident fix, a migration, a new feature…).
-4. **The cast** — 1–2 people who appear in the origin thread (name + role). Ask
-   for their **email stem** in the SE's demo org ONLY if they want real people
-   invited to the channel roster (best-effort; optional). The demo works with
-   spoofed names alone.
+4. **The cast** — 1–2 people who appear in the origin thread (name + role).
+   Names alone are enough: every line is posted through the bot spoofing that
+   name + avatar, so the backstory renders in any org without those people
+   existing. Then offer the OPTIONAL roster invite, in these words:
+   > *"I can also try to invite the real people to the channel roster so they
+   > appear as members — but I may need your help identifying the right users. I
+   > look them up by email (`demoeng+<stem>_<orgnum>@slack-corp.com`). Want me to
+   > attempt that? If so, tell me each person's email stem; if you'd rather not,
+   > we'll skip it and the scripted voices carry the demo."*
+   Only collect email stems if the SE opts in. Never guess an email — ask. If any
+   don't resolve at run time they're skipped silently.
 5. **The flaw → check → patch beat** (Slack Code): what subtle problem does the
    first version carry, what check catches it, and what does the fix change? This
    is the demo's verify peak — make it concrete and believable.
@@ -108,12 +115,15 @@ before writing. Slack mrkdwn bold is `*single asterisks*`.
 ## Step 4 — Author the seed script (bot-spoofed)
 
 Copy `channels/seed_welloguard_redesign.py` → `channels/seed_<slug>.py` and adapt:
-- Set `CHANNEL_NAME`, the `CAST` (fictional names + roles; `email_stem` only for
-  optional best-effort invites), and `MESSAGES` — a short believable origin thread
-  that plants the flaw and ENDS with a line @-mentioning the bot with your routing
-  keyword ("<@BOT>" is replaced with the real bot id at runtime).
+- Set `CHANNEL_NAME`, the `CAST` (names + roles; add an `email_stem` per person
+  ONLY if the SE opted into roster invites in Step 1.4 — otherwise omit it), and
+  `MESSAGES` — a short believable origin thread that plants the flaw and ENDS with
+  a line @-mentioning the bot with your routing keyword ("<@BOT>" is replaced with
+  the real bot id at runtime).
 - Every line posts THROUGH THE BOT via `chat:write.customize` (username +
   optional icon_url) — do NOT require per-persona user tokens.
+- The roster invite is behind the `--invite` flag (OFF by default) and only runs
+  when the SE passes it. Keep that gate; don't invite by default.
 Keep it valid Python.
 
 ## Step 5 — (If building Claude Tag) author the Tag scenario
@@ -145,9 +155,15 @@ sections; a `**` bold slipped in; `_THINKING["open"]` is generic or missing;
 Tell the SE exactly how to run it (in their own Terminal):
 
 ```bash
-.venv/bin/python channels/seed_<slug>.py --create
+.venv/bin/python channels/seed_<slug>.py --create          # stage the backstory (spoofed voices)
+# add --invite to ALSO try adding the real cast to the roster (only if they opted in):
+#   .venv/bin/python channels/seed_<slug>.py --create --invite
 SLACK_CODE_ENABLED=1 ./run.sh
 ```
+
+If they opted into invites, remind them the `--invite` pass looks people up by
+email and silently skips anyone it can't find — tell them which names resolved so
+they can decide whether to add the rest by hand in Slack.
 
 Then @-mention the bot in the seeded thread with the trigger phrase. Remind them
 Slack Code needs the beta enabled for their app; without it, the bot degrades to

@@ -96,6 +96,14 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Seed the website_redesign Slack Code backstory (bot-spoofed).")
     ap.add_argument("--channel", help="Existing channel id to seed into.")
     ap.add_argument("--create", action="store_true", help="Create/reuse the channel by name.")
+    ap.add_argument(
+        "--invite",
+        action="store_true",
+        help="ALSO try to invite the real people in CAST to the channel roster "
+        "(by email). OFF by default — the scripted voices carry the demo on their "
+        "own. Turn it on only if the CAST email stems match real users in your org; "
+        "any that don't resolve are skipped silently.",
+    )
     args = ap.parse_args()
 
     client = app_client()
@@ -112,8 +120,12 @@ def main() -> None:
     except SlackApiError:
         pass
 
-    # OPTIONAL best-effort invite of real people (skipped silently if they don't exist).
-    for m in CAST:
+    # OPTIONAL, opt-in (--invite): try to add the real people to the channel roster
+    # by email. Off by default — the scripted voices carry the demo without it. Any
+    # address that doesn't resolve to a real user is skipped silently.
+    if not args.invite:
+        print("[invite] skipped (pass --invite to try adding the real cast to the roster).")
+    for m in CAST if args.invite else []:
         email = f"demoeng+{m['email_stem']}_{ORG_NUM}@slack-corp.com"
         try:
             u = client.users_lookupByEmail(email=email)
