@@ -105,3 +105,18 @@ def user_client(email: str) -> WebClient:
             f"Add one before calling user_client({email!r})."
         )
     return WebClient(token=token, base_url=SLACK_BASE_URL)
+
+
+# ---------------------------------------------------------------------------
+# Optional helpers for debugging / richer demos (NOT shipped — add if you need them):
+#
+#   audit_log(client, message): post a timestamped line to an audit channel
+#     (os.environ["AUDIT_CHANNEL_ID"]); handy to trace what a seed script did.
+#     The bot's own agent/audit.py already implements this for the async runtime.
+#
+#   A persona-scoped client: if you capture a persona's xoxp user token into
+#     tokens.json["users"][email], user_client(email) above returns a WebClient
+#     acting AS that person. The shipped seed scripts don't need it — they post
+#     via the bot with chat:write.customize (username + icon_url) instead — but
+#     it's here if a demo wants genuinely multi-user authorship.
+# ---------------------------------------------------------------------------
