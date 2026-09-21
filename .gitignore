@@ -1,0 +1,66 @@
+# Build
+build/
+dist/
+docs/_sources/
+docs/.doctrees
+
+# Claude Code
+.claude/*.local.json
+
+# Coverage
+.coverage
+cov_*
+coverage.xml
+
+# Editors
+.idea/
+
+# Environment
+.env*
+!.env.sample
+env*/
+venv/
+.venv*
+
+# Logs
+logs/
+
+# macOS
+.DS_Store
+
+# OAuth
+data/
+
+# Slack Code durable per-channel state (scenario lock, patched flag, artifact, recap canvas)
+.slack_code_state.json
+.slack_code_state.json.tmp
+
+# Claude Tag durable per-thread checklist state
+.tag_state.json
+.tag_state.json.tmp
+
+# Slack CLI local app state (per-workspace install/app ids — machine-local, not shared)
+.slack/
+
+# Scratch commit-message file (git commit -F target)
+.git-commit-msg.tmp
+
+# Python
+__pycache__/
+*.db
+*.egg
+*.egg-info/
+*.eggs/
+*.py[cod]
+*.so
+.mypy_cache/
+.pytype/
+.python-version
+*~
+pip
+
+# Testing
+.cache
+.pytest_cache/
+.tox
+tmp.txt

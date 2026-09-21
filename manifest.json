@@ -1,0 +1,84 @@
+{
+  "display_information": {
+    "name": "Claude AI",
+    "background_color": "#d97757"
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "code_channels": {
+      "enabled": true
+    },
+    "assistant_view": {
+      "assistant_description": "Claude AI — your AI teammate in Slack. Summarize threads, draft messages, brainstorm, and triage incidents without leaving the conversation.",
+      "suggested_prompts": [
+        {
+          "title": "Catch me up",
+          "message": "Catch me up on this channel — pull together the decisions, what's still open, and who each item is waiting on."
+        },
+        {
+          "title": "What can you see?",
+          "message": "What can you access from this channel?"
+        },
+        {
+          "title": "Draft a status update",
+          "message": "Draft a short status update I can post summarizing this thread's decisions and open risks."
+        }
+      ]
+    },
+    "bot_user": {
+      "display_name": "Claude AI",
+      "always_online": false
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "assistant:write",
+        "canvases:read",
+        "canvases:write",
+        "channels:history",
+        "channels:join",
+        "channels:read",
+        "channels:write.invites",
+        "chat:write",
+        "chat:write.customize",
+        "code_channels:manage",
+        "groups:history",
+        "groups:read",
+        "groups:write",
+        "groups:write.invites",
+        "im:history",
+        "im:read",
+        "im:write",
+        "reactions:write",
+        "users:read",
+        "users:read.email"
+      ]
+    }
+  },
+  "settings": {
+    "socket_mode_enabled": true,
+    "org_deploy_enabled": true,
+    "interactivity": {
+      "is_enabled": true
+    },
+    "event_subscriptions": {
+      "bot_events": [
+        "agent_session_stopped",
+        "app_home_opened",
+        "app_mention",
+        "assistant_thread_started",
+        "message.channels",
+        "message.groups",
+        "message.im",
+        "message.session"
+      ]
+    },
+    "token_rotation_enabled": false
+  }
+}
