@@ -78,7 +78,10 @@ AGENT_TOOLS = ["add_emoji_reaction"]
 # Override at launch with CLAUDE_AI_MODEL=<id> the moment Haiku is entitled (or in
 # a prod gateway that offers it) — no code edit needed. The startup self-check
 # (see log_model_check) surfaces a 401 or a silent reroute in the init log.
-CLAUDE_AI_MODEL = os.environ.get("CLAUDE_AI_MODEL", "us.anthropic.claude-sonnet-5")
+# TEMPLATE DEFAULT is the public model id `claude-sonnet-5` (works with any SE's
+# own `claude` login). Internal SEs on the Salesforce Bedrock gateway override
+# with CLAUDE_AI_MODEL=us.anthropic.claude-sonnet-5 (or rely on ~/.claude/settings.json).
+CLAUDE_AI_MODEL = os.environ.get("CLAUDE_AI_MODEL", "claude-sonnet-5")
 
 
 async def run_agent(

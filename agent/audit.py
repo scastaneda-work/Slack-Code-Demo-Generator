@@ -10,21 +10,24 @@ from agent.identity import resolve_user_name
 
 logger = logging.getLogger(__name__)
 
-# Mask a literal 'Jennifer' typed in prose — but not one already prefixed with
-# '~' (e.g. produced by _demention resolving <@U…> → ~Jennifer), so we don't
-# double-tilde it into '~~Jennifer'.
-_JENNIFER_RE = re.compile(r"(?<!~)\bJennifer\b")
 # Slack user mention: <@U0123ABCD> (optionally <@U0123ABCD|label>). Left in an
-# audit message these render as LIVE pings — noise for whoever's tagged (usually
-# Jennifer, the demo admin) every time the bot audits an action. We de-mention
-# them to a plain, non-pinging "~Name" instead.
+# audit message these render as LIVE pings — noise for whoever's tagged every
+# time the bot audits an action. We de-mention them to a plain, non-pinging
+# "~Name" instead.
 _USER_MENTION_RE = re.compile(r"<@([A-Z0-9]+)(?:\|[^>]*)?>")
 
 
 def _mask(message: str) -> str:
-    """Mask any literal 'Jennifer' in prose to '~Jennifer' (avoids a live mention
-    if her name is typed out)."""
-    return _JENNIFER_RE.sub("~Jennifer", message)
+    """Mask a literal demo-admin name in prose to a non-pinging '~Name'.
+
+    The name comes from the DEMO_ADMIN_NAME env var (e.g. the persona whose
+    xoxp token seeds the demo); unset → no masking. Skips a name already
+    prefixed with '~' so we don't double-tilde one produced by _demention."""
+    name = os.environ.get("DEMO_ADMIN_NAME")
+    if not name:
+        return message
+    pattern = re.compile(rf"(?<!~)\b{re.escape(name)}\b")
+    return pattern.sub(f"~{name}", message)
 
 
 async def _demention(client: AsyncWebClient, message: str) -> str:
