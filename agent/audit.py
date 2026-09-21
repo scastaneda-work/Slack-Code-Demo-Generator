@@ -35,7 +35,7 @@ async def _demention(client: AsyncWebClient, message: str) -> str:
 
     Audit lines routinely include `<@{user_id}>` to attribute an action; posted
     verbatim they ping that user. We resolve the id to a display name (cached via
-    identity.resolve_user_name) and emit `~Name`, matching the existing ~Jennifer
+    identity.resolve_user_name) and emit `~Name`, matching the DEMO_ADMIN_NAME
     masking convention. Falls back to `~someone` if the name can't be resolved so
     the ping is neutralized regardless."""
     ids = set(_USER_MENTION_RE.findall(message))
