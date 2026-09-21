@@ -13,9 +13,34 @@ that satisfy a QA-enforced contract, then prove them with `qa.py --self-test`.
 Read this whole file, then run the interview. Keep the SE in plain language —
 they may not be a coder. Never fabricate their org's real names/emails — ask.
 
-## Step 0 — Which surface(s)?
+## Step 0 — Start open-ended, then recommend
 
-Ask first: **"Are you demoing Slack Code, Claude Tag, or both this time?"**
+Open with ONE broad prompt, not a questionnaire:
+
+> *"Tell me about the demo you want to build — the customer, what they do, and
+> the story you'd like Claude to walk through. As much or as little as you've
+> got."*
+
+Then **use whatever they give you to skip questions.** From a rich answer you can
+often infer the surface, customer, product, the change, a plausible cast, and a
+flaw→check→patch beat — so DON'T re-ask those. Instead, **state the demo you'll
+build and let them vet it**: a short spec (surface, customer, change, cast,
+artifacts, the flaw→check→patch beat) and *"here's what I'll create — want me to
+adjust anything before I build it?"* Fill any genuine gaps with a targeted
+question or a sensible default you name.
+
+If their answer is thin, or they say they're not sure / want to be walked
+through it, fall back to the full guided interview (Steps 1–3 below) — ask those
+one topic at a time. Either way you converge on the same spec; the open start
+just spares a prepared SE the full Q&A.
+
+The rest of this file (Steps 1–3) is that fallback interview and the field
+reference you'll fill regardless of how you got there.
+
+## Step 1 — Which surface(s)?
+
+If not already clear from their description, ask: **"Are you demoing Slack Code,
+Claude Tag, or both this time?"**
 
 - **Slack Code** — a code channel with artifact tabs (the bulk of demos). Author
   a `scenarios/<slug>.py`.
@@ -26,9 +51,9 @@ Ask first: **"Are you demoing Slack Code, Claude Tag, or both this time?"**
 Only do the path(s) they pick. If both, build the Slack Code one first (it's the
 hero), then the Tag one.
 
-## Step 1 — Gather the story (interview, one topic at a time)
+## Step 2 — Gather the story (the fallback interview — one topic at a time)
 
-Ask, don't assume:
+Only ask for what Step 0 didn't already give you. Ask, don't assume:
 
 1. **Customer / company** name and what they do (used for the fictional company
    in the story — or use the customer's real name if the SE wants).
@@ -39,18 +64,21 @@ Ask, don't assume:
    Names alone are enough: every line is posted through the bot spoofing that
    name + avatar, so the backstory renders in any org without those people
    existing. Then offer the OPTIONAL roster invite, in these words:
-   > *"I can also try to invite the real people to the channel roster so they
-   > appear as members — but I may need your help identifying the right users. I
-   > look them up by email (`demoeng+<stem>_<orgnum>@slack-corp.com`). Want me to
-   > attempt that? If so, tell me each person's email stem; if you'd rather not,
-   > we'll skip it and the scripted voices carry the demo."*
-   Only collect email stems if the SE opts in. Never guess an email — ask. If any
-   don't resolve at run time they're skipped silently.
+   > *"Would you like me to invite the other characters to the channel? If you
+   > give me their emails, I can automatically add them and/or post some initial
+   > messages as them. You'll drive the bulk of the demo as your main persona."*
+   Present two choices: **"Yes — I'll give you their emails"** (they provide each
+   person's email so the seed runs with `--invite` and adds them; anyone who
+   doesn't resolve is skipped silently and you report who landed) and **"Skip it —
+   spoof these personas only"** (the default: the bot posts as them by name+avatar,
+   nothing depends on them existing in the org). Only collect emails if the SE
+   opts in. Never guess an email — ask. Any that don't resolve at run time are
+   skipped silently.
 5. **The flaw → check → patch beat** (Slack Code): what subtle problem does the
    first version carry, what check catches it, and what does the fix change? This
    is the demo's verify peak — make it concrete and believable.
 
-## Step 2 — The artifact menu (Slack Code only)
+## Step 3 — The artifact menu (Slack Code only)
 
 Present the menu and recommend based on the story. The SE can override.
 
@@ -68,7 +96,7 @@ Present the menu and recommend based on the story. The SE can override.
 `ARTIFACTS` in the scenario = the subset you include (always contains `"diff"`).
 Let the story drive the default; confirm with the SE.
 
-## Step 3 — Author the Slack Code scenario
+## Step 4 — Author the Slack Code scenario
 
 Copy `scenarios/_template.py` → `scenarios/<slug>.py` and fill EVERY member. The
 contract (duck-typed, enforced by `qa.py --self-test`):
@@ -112,11 +140,11 @@ Study `scenarios/website_redesign.py` (preview + dashboard + FAQ) and
 `scenarios/billing_webhook.py` (diff + dashboard, no preview) as worked references
 before writing. Slack mrkdwn bold is `*single asterisks*`.
 
-## Step 4 — Author the seed script (bot-spoofed)
+## Step 5 — Author the seed script (bot-spoofed)
 
 Copy `channels/seed_welloguard_redesign.py` → `channels/seed_<slug>.py` and adapt:
 - Set `CHANNEL_NAME`, the `CAST` (names + roles; add an `email_stem` per person
-  ONLY if the SE opted into roster invites in Step 1.4 — otherwise omit it), and
+  ONLY if the SE opted into roster invites in Step 2.4 — otherwise omit it), and
   `MESSAGES` — a short believable origin thread that plants the flaw and ENDS with
   a line @-mentioning the bot with your routing keyword ("<@BOT>" is replaced with
   the real bot id at runtime).
@@ -126,7 +154,7 @@ Copy `channels/seed_welloguard_redesign.py` → `channels/seed_<slug>.py` and ad
   when the SE passes it. Keep that gate; don't invite by default.
 Keep it valid Python.
 
-## Step 5 — (If building Claude Tag) author the Tag scenario
+## Step 6 — (If building Claude Tag) author the Tag scenario
 
 Copy `scenarios_tag/_template.py` → `scenarios_tag/<slug>.py`, fill `SLUG`,
 `KEYWORDS` (a tuple — MUST stay disjoint from the Slack Code keywords so a build
@@ -136,7 +164,7 @@ optional `PARTICIPANTS`, `initial_plan()` (a taskplan-shaped checklist, ≤8 ste
 `scenarios_tag/__init__.py`. Study `scenarios_tag/scheduled_exports.py` and
 `scenarios_tag/blog_update.py`.
 
-## Step 6 — Verify
+## Step 7 — Verify
 
 Run (in the SE's Terminal — see the sandbox notes in SETUP.md):
 
@@ -150,7 +178,7 @@ misses: dashboard/recap numbers disagree; `recap_canvas` isn't exactly 5 `##`
 sections; a `**` bold slipped in; `_THINKING["open"]` is generic or missing;
 `preview_html` isn't self-contained or doesn't change when patched.
 
-## Step 7 — Hand off the run commands
+## Step 8 — Hand off the run commands
 
 Tell the SE exactly how to run it (in their own Terminal):
 
