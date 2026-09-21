@@ -738,32 +738,32 @@ def _run_self_test() -> int:
     echo_fixtures = [
         # (label, event, expected_is_echo)
         ("real coding mention", {
-            "text": "<@U0B4M0L4A23> migrate the billing cron to the new scheduler",
+            "text": "<@U0BOTEXAMPLE> migrate the billing cron to the new scheduler",
             "blocks": [{"type": "rich_text", "block_id": "YHIS+"}],
         }, False),
         # Live-log echo: carries the code-channel unfurl attachment.
         ("echo via agent_channel_unfurl", {
-            "text": "<https://x.slack.com/archives/C0/p1|Context> from <#C0>:\n> <@U0B4M0L4A23> migrate the billing cron",
+            "text": "<https://x.slack.com/archives/C0/p1|Context> from <#C0>:\n> <@U0BOTEXAMPLE> migrate the billing cron",
             "attachments": [{"agent_channel_unfurl": {"channel_id": "C0NEW", "joinable_from_channel_id": "C0ORIG"}}],
         }, True),
         # Live-log echo: carries an agent_channel_origin_context block.
         ("echo via origin_context block", {
-            "text": "<https://x.slack.com/archives/C0/p1|Context> from <#C0>:\n> <@U0B4M0L4A23> migrate the billing cron",
+            "text": "<https://x.slack.com/archives/C0/p1|Context> from <#C0>:\n> <@U0BOTEXAMPLE> migrate the billing cron",
             "blocks": [
                 {"type": "context", "block_id": "agent_channel_origin_context"},
                 {"type": "rich_text", "block_id": "YHIS+"},
             ],
         }, True),
         ("echo via origin_status block", {
-            "text": "Started a session with <@U0B4M0L4A23> in <#C0NEW>",
+            "text": "Started a session with <@U0BOTEXAMPLE> in <#C0NEW>",
             "blocks": [{"type": "context", "block_id": "agent_channel_origin_status_C0NEW"}],
         }, True),
         # A bare mention is NOT an echo — app_mentioned answers it with a prompt.
-        ("bare mention, no markers", {"text": "<@U0B4M0L4A23>"}, False),
+        ("bare mention, no markers", {"text": "<@U0BOTEXAMPLE>"}, False),
         ("empty event", {}, False),
         # Real asks must NOT be dropped (no echo markers present):
-        ("channel-ref ask", {"text": "<@U0B4M0L4A23> summarize <#C0C0K1732N5|billing>"}, False),
-        ("PR-link ask, no prose", {"text": "<@U0B4M0L4A23> <https://github.com/acme/pr/9|this PR>"}, False),
+        ("channel-ref ask", {"text": "<@U0BOTEXAMPLE> summarize <#C0C0K1732N5|billing>"}, False),
+        ("PR-link ask, no prose", {"text": "<@U0BOTEXAMPLE> <https://github.com/acme/pr/9|this PR>"}, False),
     ]
     for label, evt, expected in echo_fixtures:
         got = is_context_echo(evt)
