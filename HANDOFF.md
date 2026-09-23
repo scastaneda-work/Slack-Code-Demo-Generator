@@ -42,6 +42,8 @@ technical story, and which artifacts to show (Code diff, HTML Preview,
 Dashboard, Canvas recap) — then writes a deterministic scenario + a matching
 seed script and verifies them with `qa.py --self-test`. Because the story is
 authored ahead of time, it renders instantly at demo time (no freeform LLM wait).
+The spoofed agent defaults to Claude; swap the persona if the customer wants to
+see a different AI agent in the channel.
 
 Prefer a built-in example? The five shipped stories run as-is; the default is
 `website_redesign`.

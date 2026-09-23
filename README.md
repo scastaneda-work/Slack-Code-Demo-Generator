@@ -1,14 +1,20 @@
-# Claude in Slack Demo Simulator
+# Slack Code Demo Generator
 
-A demo tool for Slack SEs. It simulates **Claude in Slack** — both the
-conversational **Claude Tag** surface and the **Slack Code** channel surface —
-so you can run a convincing, fully-scripted Claude-in-Slack demo in *your own*
-demo org, tailored to *your* customer.
+A demo-building tool for Slack SEs. It generates convincing, fully-scripted
+**Slack Code** demos you run in *your own* demo org, tailored to *your*
+customer — plus the conversational **Claude Tag** surface when you need it.
+
+The AI coding agent in the channel is a spoof, and **which agent it spoofs is up
+to you.** It ships with **Claude as the default persona**, but the persona is
+swappable — point it at any AI agent (Cursor, Copilot, Gemini, an in-house
+assistant) and the demo presents that agent instead. Agent optionality is the
+point: show the story that matches the customer in front of you.
 
 Everything the bot "does" (code diffs, live HTML previews, dashboards, canvas
 recaps, human chime-ins) is a **convincing prop** — there is no real repo, no
 real GitHub, no real CI. That's the point: the demo lands every time, with no
-live dependencies, and you customize the story to the customer in front of you.
+live dependencies, and you customize the story — and the agent — to the customer
+in front of you.
 
 > **New here?** Open this folder in Claude Code and say *"help me set this up"* —
 > the bundled `CLAUDE.md` walks your Claude through install, and once you're
@@ -18,22 +24,23 @@ live dependencies, and you customize the story to the customer in front of you.
 
 ## The two surfaces
 
-- **Claude Tag** — Claude as a helpful assistant inside Slack. In DMs / the
+- **Slack Code** (the main event) — a coding-task @-mention spins up a dedicated
+  code channel: a session status, a context bar (repo/branch/PR/CI/check),
+  **Artifact tabs** (Code diff, live HTML Preview, Dashboard, Canvas recap), and
+  a check → patch → recap lifecycle. Humans and the AI agent appear to
+  collaborate in one channel. *Slack Code is a Slack beta — your workspace must
+  have it enabled for your app; the bot degrades gracefully to a normal thread
+  reply if it isn't.*
+- **Claude Tag** — the AI agent as a helpful assistant inside Slack. In DMs / the
   assistant panel it does conversational catch-up and thread/channel
   summarization (decisions made, open questions, who each item is waiting on);
   @-mentioned in a channel it can reply with a rich Block Kit incident/synthesis
   card. Optionally a lightweight in-thread "Thinking" checklist for small
   collaborative tasks.
-- **Slack Code** — a coding-task @-mention spins up a dedicated code channel: a
-  session status, a context bar (repo/branch/PR/CI/check), **Artifact tabs**
-  (Code diff, live HTML Preview, Dashboard, Canvas recap), and a
-  check → patch → recap lifecycle. Humans and Claude appear to collaborate in
-  one channel. *Slack Code is a Slack beta — your workspace must have it
-  enabled for your app; the bot degrades gracefully to a normal thread reply if
-  it isn't.*
 
 An SE can demo **either surface or both** — the `/build-slack-demo` interview
-asks which you need this time.
+asks which you need this time. On both surfaces the on-screen agent is the
+swappable persona (Claude out of the box).
 
 ## Build your own story (the main event)
 
@@ -42,7 +49,8 @@ refactor, a checkout-latency incident, a flaky test, a SQL migration) are
 **ready-to-run examples and references** — but the real value is customizing to
 your customer. Working with your Claude Code, the `/build-slack-demo` skill:
 
-1. asks which surface(s) you're demoing;
+1. asks which surface(s) you're demoing and which AI agent to present (Claude by
+   default, or any agent you name);
 2. gathers your customer, product, cast, and the technical story;
 3. offers a **menu of artifacts** (Code diff, HTML Preview, Dashboard, Canvas
    recap) and suggests ones that fit — the story guides the defaults, you can
@@ -62,7 +70,7 @@ your customer. Working with your Claude Code, the `/build-slack-demo` skill:
 | `tokens.example.json` | Copy to `tokens.json` (gitignored) and fill in |
 | `.env.sample` | Documented runtime knobs (Slack Code gate, model, org num…) |
 | `agent/` | Agent SDK runtime (persona load, render, Slack Code engine) |
-| `personas/claude_ai.md` | The generic Claude persona |
+| `personas/claude_ai.md` | The default (Claude) agent persona — copy/swap it to spoof a different AI agent |
 | `personas/_demo_context.example.md` | Per-demo channel context template (the skill writes `_demo_context.md`) |
 | `scenarios/` | Slack Code stories (5 examples + `freeform` + `_template.py`) |
 | `scenarios_tag/` | Claude Tag lightweight stories (+ `_template.py`) |
@@ -75,8 +83,9 @@ your customer. Working with your Claude Code, the `/build-slack-demo` skill:
 
 - **No real integrations.** Artifacts are props; no repo, GitHub, or CI is touched.
 - **Your credentials stay local.** `tokens.json` (gitignored, chmod 600) holds
-  your app's bot/app tokens. The model runs through *your* `claude` CLI login —
-  no API keys live in this repo.
+  your app's bot/app tokens. By default the model runs through *your* `claude`
+  CLI login — no API keys live in this repo. (The persona the agent *presents* as
+  is separate from the model driving it.)
 - **Ships with no live-org data.** The example stories use fictional companies
   and people; you supply your own org's IDs in `tokens.json`.
 

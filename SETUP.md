@@ -1,6 +1,6 @@
 # Setup — one-time per SE / per demo org
 
-This is the one-time setup to get the Claude in Slack Demo Simulator running in
+This is the one-time setup to get the Slack Code Demo Generator running in
 **your** demo org. Do it once; after that, you build and run demos with the
 `/build-slack-demo` skill (see [HANDOFF.md](HANDOFF.md)).
 

@@ -1,9 +1,12 @@
 # CLAUDE.md — guidance for Claude Code operating this repo
 
-This repo is the **Claude in Slack Demo Simulator**: a demo tool a Slack SE runs
-in their own demo org to show Claude in Slack (Claude Tag + Slack Code),
-customized to their customer. You (Claude Code) are here to help the SE set it
-up, build a custom demo story, run it, and tear it down.
+This repo is the **Slack Code Demo Generator**: a demo-building tool a Slack SE
+runs in their own demo org to generate scripted **Slack Code** demos (plus the
+**Claude Tag** surface), customized to their customer. The AI coding agent in
+the channel is a spoof — it ships with **Claude as the default persona**, but
+the persona is swappable to spoof any AI agent (Cursor, Copilot, Gemini, etc.).
+You (Claude Code) are here to help the SE set it up, build a custom demo story,
+run it, and tear it down.
 
 Read [README.md](../README.md) for what it is, [SETUP.md](../SETUP.md) for the
 one-time install, and [HANDOFF.md](../HANDOFF.md) for the lifecycle.
