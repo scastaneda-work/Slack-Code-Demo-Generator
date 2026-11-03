@@ -1,3 +1,6 @@
+from agent.persona import agent_name
+
+
 def build_app_home_view(
     install_url: str | None = None, is_connected: bool = False
 ) -> dict:
@@ -14,7 +17,7 @@ def build_app_home_view(
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": ":wave: Hey, I'm Claude — your AI teammate in Slack",
+                "text": f":wave: Hey, I'm {agent_name()} — your AI teammate in Slack",
             },
         },
         {

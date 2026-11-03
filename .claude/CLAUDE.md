@@ -30,6 +30,35 @@ At the start of a session, check whether `tokens.json` exists:
 - **`tokens.json` present** → they're configured. Offer to **build a demo**
   (`/build-slack-demo`) or run an existing one. Don't re-run setup.
 
+## The demo manager (`./demo`)
+
+Every demo is a manifest in `demos/<id>.toml`, or `demos/custom/<id>/demo.toml`
+for a private one (see `demos/README.md`), tying its scenarios, seed scripts,
+docs and assets together. `./demo` is the SE's terminal UI over them;
+`./demo <command>` is the same thing for you: `list`, `show <id>`,
+`run <id> <action>`, `route "<phrase>"`, `hide`/`unhide`, `delete` (restorable,
+to `.trash/`), `trash`, `restore`, `check`. Use it to answer "what demos do I
+have", "which demo does this phrase open", or "post the backstory for <demo>".
+Scenarios register themselves — never edit a list in `scenarios/__init__.py`.
+
+The agent the bot presents as is a **persona** (`personas/<slug>.md`). One is
+active at a time, saved as `persona` + `name` on the bot in `tokens.json` (both
+non-secret). Switch with `./demo persona use <slug>`, make one with
+`./demo persona new "<Name>" --maker "<Company>"`; restart the bot afterwards.
+The app's picture can't be set by API — tell the SE to upload it in the app's
+settings. In scripted lines, write `{agent}` instead of naming Claude.
+
+**Three slash commands wrap this CLI** — `/demo` (list/show/run/route),
+`/demo-check` (setup health), `/demo-persona` (list/use/new) — so an SE who's
+never heard of `./demo` finds it in the `/` autocomplete menu instead of
+needing `--help`. **When an SE asks to pull up, run, or find a demo — or
+asks "how do I…" about any of the above — answer with the exact `./demo`
+command (or its `/demo*` slash command), not a description of what it does.**
+"How do I see my demos" → `./demo list` / `/demo`. "How do I run the checkout
+one" → `./demo run checkout-incident` / `/demo run checkout-incident`. "Is my
+setup OK" → `./demo check` / `/demo-check`. "Can it be someone besides Claude"
+→ `./demo persona use <slug>` / `/demo-persona use <slug>`.
+
 ## Building demos
 
 The heart of this tool is the **`build-slack-demo`** skill
@@ -39,6 +68,24 @@ Code story about <X>" — invoke it. It interviews them (which surface; the
 customer/cast/story; the artifact menu) and writes a deterministic scenario +
 seed script, then verifies with `qa.py --self-test`. Prefer it over hand-editing
 scenario files.
+
+When the SE wants a demo's backstory posted again, run its *Post backstory*
+action (`./demo run <id> post-backstory`). Seeded messages are fixed story
+props: never reword them or anchor anything (code channels, edits, reactions)
+to them.
+
+## Private demos
+
+A demo built for a real customer usually shouldn't go back into the shared
+repo. Build it in its own folder, `demos/custom/<id>/`, laid out like the repo
+(`demo.toml`, `scenarios/`, `scenarios_tag/`, `channels/`, `docs/`). That folder
+is git-ignored, so there's nothing to exclude and the customer's name never
+appears in a shared file; the bot, `./demo` and the self-test find it like any
+other demo. Paths in its `demo.toml` stay repo-relative.
+Put Claude Code notes about it in `CLAUDE.local.md` at the repo root, and any
+self-test checks in `qa_local/<name>.py` (a `run() -> int` returning its failure
+count). Both are git-ignored, and `qa.py --self-test` runs `qa_local/` when
+it's there.
 
 ## Token discipline
 
@@ -56,10 +103,11 @@ scenario files.
   their app. Without it, the bot degrades to a normal thread reply — say so
   rather than implying it's broken.
 - **Run live steps in the SE's own Terminal**, not sandboxed Bash or a nested
-  session: `pip install` (PyPI is often blocked in-sandbox), seeding, `run.sh`,
-  and `qa.py --vet-questions` (host OAuth vars leak into nested sessions → "Not
-  logged in").
-- **Build the venv with Python 3.12** (3.10+ required by the Agent SDK).
+  session: `pip install` (PyPI is often blocked in-sandbox), `run.sh`, and
+  `qa.py --vet-questions` (host OAuth vars leak into nested sessions → "Not
+  logged in"). Seeding (`channels/seed_*.py`) works from here, so run it yourself
+  when the SE asks for messages to be posted.
+- **Build the venv with Python 3.12** (3.10+ for the Agent SDK, 3.11+ for `./demo`).
 - **After changing any scenario shape**, run `.venv/bin/python qa.py --self-test`.
 
 ## Verify before claiming done

@@ -8,18 +8,23 @@ in the dashboard and the recap MUST match (author them once, reference twice).
 Steps to add a demo:
   1. Copy this file to ``scenarios/<slug>.py``.
   2. Fill the constants + functions below.
-  3. Register ``<slug>`` in ``scenarios/__init__.py`` ``_KNOWN``.
-  4. Set ``SLACK_CODE_SCENARIO=<slug>`` (see ``agent.slackcode.load_slack_code_config``).
-  5. Seed a matching origin thread (a ``channels/seed_<slug>.py`` script) whose
+  3. Set ``ROUTE_KEYWORDS`` (and ``ROUTE_PRIORITY`` if it must beat a generic
+     story). There's no list to register in — every module here is discovered.
+  4. Seed a matching origin thread (a ``channels/seed_<slug>.py`` script) whose
      discussion makes the trigger mention the obvious next action.
+  5. Add a ``demos/<id>.toml`` manifest so ``./demo`` lists and runs it.
   6. Relaunch via ``./run.sh`` (see HANDOFF.md → Run a demo) and demo.
+
+A private (customer) demo keeps all of these in its own git-ignored folder
+instead: ``demos/custom/<id>/scenarios/<slug>.py``, ``…/channels/seed_<slug>.py``
+and the manifest as ``…/demo.toml``. See ``demokit/custom.py``.
 
 No logic changes anywhere else — the orchestrator reads whatever scenario is active.
 """
 from __future__ import annotations
 
 # --- Identity / context-bar facts --------------------------------------------
-SLUG = "template"                 # must equal the module name and the _KNOWN entry
+SLUG = "template"                 # must equal the module name
 REPO = "acme/example-service"
 REPO_URL = "https://github.com/acme/example-service"
 BRANCH_PREFIX = "feat/"
@@ -35,6 +40,15 @@ CHECK_LABEL = "quality"
 # produces a meta-diagram that undersells the feature. The orchestrator only
 # publishes the artifacts named here (and always publishes the diff).
 ARTIFACTS = {"diff", "preview", "dashboard"}
+
+# --- Routing ------------------------------------------------------------------
+# The @-mention phrases that open THIS story's code channel. Lower
+# ROUTE_PRIORITY is matched first (see scenarios.route_scenario): a customer
+# story's specific phrases should beat the generic examples (website_redesign
+# is 90). The seed's trigger line must contain one of these AND an intent word
+# ("implement", "build", "fix", "refactor", "migrate"…) so a channel opens.
+ROUTE_PRIORITY = 15
+ROUTE_KEYWORDS: tuple[str, ...] = ()
 
 
 def base_diff() -> str:
@@ -128,7 +142,9 @@ PARTICIPANTS: list[dict] = [
 def participant_beats() -> list[dict]:
     """Scripted human chime-ins. `phase`: "arrival" (fires as the channel opens —
     the stall while Claude's first reply loads) or "on_artifacts" (fires just after
-    the diff/dashboard publish — reacting to what shipped). Return [] for none."""
+    the diff/dashboard publish — reacting to what shipped). Write ``{agent}`` where a
+    line names the AI agent ("Let's see what {agent} ships") — it's filled with the
+    active persona's name. Return [] for none."""
     return [
         # {"name": "Ralph", "phase": "arrival", "text": ":eyes: Following — …"},
         # {"name": "Elliott", "phase": "on_artifacts", "text": "Diff's up already — …"},

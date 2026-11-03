@@ -1,14 +1,15 @@
 [project]
-name = "claude-ai-bot"
+name = "slack-code-demo-generator"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "slack-sdk==3.41.0",
     "slack-bolt>=1.28.0",
     "slack-cli-hooks<1.0.0",
-    "claude-agent-sdk>=0.1.75",
+    "claude-agent-sdk>=0.2.82",
     "aiohttp>=3.13.5",
     "python-dotenv==1.2.2",
+    "textual>=8.2,<9",
 ]
 
 [project.optional-dependencies]
@@ -17,12 +18,12 @@ test = [
     "pytest-asyncio",
 ]
 dev = [
-    "bolt-python-support-agent-claude[test]",
+    "slack-code-demo-generator[test]",
     "ruff==0.15.12",
 ]
 
 [tool.setuptools.packages.find]
-include = ["agent*", "listeners*", "thread_context*"]
+include = ["agent*", "listeners*", "thread_context*", "demokit*", "scenarios*"]
 
 [tool.ruff]
 [tool.ruff.lint]

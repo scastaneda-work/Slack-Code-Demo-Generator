@@ -17,7 +17,7 @@ Code, just say *"help me set this up"* and it will walk these with you.
 
 ## Prerequisites
 
-- **Python 3.10+** (3.12 recommended). Check: `python3.12 --version`.
+- **Python 3.11+** (3.12 recommended). Check: `python3.12 --version`.
 - **Slack CLI** installed and logged in to your demo org (`slack login`).
 - A local **`claude` CLI** login, OR an `ANTHROPIC_API_KEY` (Step 5).
 - For Slack Code demos: your workspace admin must have the **Slack Code beta**
@@ -79,8 +79,8 @@ chat.
 
 ## Step 5 — Python environment **[Terminal]**
 
-Build the venv with **Python 3.12** (the Agent SDK requires 3.10+; an older
-`python3` fails with "requires a different python version"):
+Build the venv with **Python 3.12** (the Agent SDK requires 3.10+ and `./demo`
+3.11+; an older `python3` fails with "requires a different python version"):
 
 ```bash
 python3.12 -m venv .venv
@@ -104,6 +104,9 @@ scenarios are intact. (One `RuntimeError: boom` line mid-run is an *intentional*
 injected-failure test, immediately followed by a `[PASS]`.)
 
 ## You're set
+
+Run `./demo check` (or open `./demo` and press `s`) any time to re-check this
+machine's setup: tokens filled in and private, venv Python, Slack CLI login.
 
 Next: build a demo. In Claude Code, run **`/build-slack-demo`** (or say "build
 me a demo for <customer>"). To run a built-in example instead, see

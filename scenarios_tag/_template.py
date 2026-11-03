@@ -1,5 +1,5 @@
-"""Template for a Claude Tag scenario. Copy to `<slug>.py`, fill the constants, and
-add `<slug>` to `_KNOWN` in `scenarios_tag/__init__.py`. Pure data — no logic.
+"""Template for a Claude Tag scenario. Copy to `<slug>.py` and fill the constants —
+the module registers itself (no list to edit). Pure data — no logic.
 
 See `scenarios_tag/__init__.py` for the full contract and the turn-delta shape.
 `scheduled_exports.py` (has a PR line + a replan beat) and `blog_update.py` (a
@@ -7,10 +7,10 @@ Drive/doc task, no PR) are the reference scenarios.
 """
 from __future__ import annotations
 
-SLUG = "template"  # must equal the module name and the _KNOWN entry
+SLUG = "template"  # must equal the module name
 
 # Curated keywords this scenario claims. MUST stay disjoint from the Slack Code
-# keyword sets (agent.slackcode.intent_keywords + scenarios._ROUTE_KEYWORDS) so a
+# keyword sets (agent.slackcode.intent_keywords + scenarios/*.py ROUTE_KEYWORDS) so a
 # real build task isn't stolen into the lightweight Tag surface.
 KEYWORDS: tuple[str, ...] = ()
 

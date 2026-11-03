@@ -1,0 +1,20 @@
+name     = "WelloGuard homepage redesign"
+customer = "WelloGuard"
+summary  = "The default story: a homepage redesign whose CTA fails WCAG contrast; the contrast check catches it and the patch re-renders the live Preview."
+surfaces  = ["slack_code"]
+scenarios = ["website_redesign"]
+trigger   = "implement the homepage redesign"
+channels  = ["welloguard-redesign"]
+example   = true
+files = ["channels/seed_welloguard_redesign.py"]
+
+[[actions]]
+id    = "post-backstory"
+step  = "Set the scene"
+label = "Post backstory"
+note  = "Posts the design, engineering and product thread to #welloguard-redesign."
+run   = ["channels/seed_welloguard_redesign.py", "--create"]
+options = [
+  { flag = "--invite", label = "Also invite the cast" },
+]
+repeat_warning = "It posts a second copy of the thread if the old one is still there."

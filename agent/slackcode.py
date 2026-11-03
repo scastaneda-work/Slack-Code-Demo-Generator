@@ -228,6 +228,10 @@ async def create_channel(
     prompt won't spawn N channels). Passing origin_channel_id/ts makes Slack
     match the origin channel's privacy, invite the bot, and record the
     origin_link back-reference. On success, data carries the new channel_id.
+
+    The origin is ALWAYS the mention itself — never re-anchored to the thread
+    parent. Seeded story messages must stay untouched; if Slack rejects a
+    thread-reply origin, the caller falls back to a thread reply.
     """
     return await _call(
         client,
@@ -712,9 +716,54 @@ async def is_code_channel(client: AsyncWebClient, channel_id: str, *, use_cache:
 # client directly rather than _call(); every one is best-effort and never raises.
 
 
+# ---------------------------------------------------------------------------
+# Persona user tokens — post AS a cast member
+# ---------------------------------------------------------------------------
+# tokens.json["users"][<persona email>] = that demo persona's xoxp- token. When a
+# scripted participant has one, their chime-in is a real message FROM them (no
+# APP tag) instead of the bot spoofing their name. _CAST_USER_IDS records every
+# persona we resolve or post as, so the listeners never treat a scripted line
+# (which arrives like any human message) as a request to Claude.
+_CAST_USER_IDS: set[str] = set()
+
+
+def mark_cast_member(user_id: str | None) -> None:
+    """Record a scripted persona's user id (their messages are never answered)."""
+    if user_id:
+        _CAST_USER_IDS.add(user_id)
+
+
+def is_cast_member(user_id: str | None) -> bool:
+    """True if `user_id` is a scripted persona the demo posts as."""
+    return bool(user_id) and user_id in _CAST_USER_IDS
+
+
+def _persona_user_token(email: str) -> str | None:
+    """The persona's xoxp- token from tokens.json["users"], or None (absent, or
+    tokens.json unreadable). Read per call so a token added mid-run is picked up."""
+    try:
+        from config import load_tokens  # repo-root module; enforces chmod 600
+        return (load_tokens().get("users") or {}).get(email) or None
+    except Exception:  # noqa: BLE001 — no token just means "spoof instead"
+        return None
+
+
+async def _persona_client_for(client: AsyncWebClient, email_stem: str | None) -> AsyncWebClient | None:
+    """An AsyncWebClient acting AS the persona `email_stem`, if tokens.json has
+    their token; else None (the caller spoofs via the bot)."""
+    stem = (email_stem or "").strip()
+    if not stem:
+        return None
+    org = await _demo_org_num(client)
+    if not org:
+        return None
+    token = _persona_user_token(_persona_email(stem, org))
+    return AsyncWebClient(token=token) if token else None
+
+
 async def post_as_participant(
     client: AsyncWebClient, channel_id: str, *, name: str, text: str, icon_url: str | None = None,
-    thread_ts: str | None = None,
+    thread_ts: str | None = None, email_stem: str | None = None, user_id: str | None = None,
 ) -> SlackCodeResult:
     """Post a scripted human chime-in in a code channel, spoofing the persona via
     chat:write.customize. Passes BOTH username=name AND icon_url (the persona's real
@@ -728,6 +777,37 @@ async def post_as_participant(
     Tag surface); omit it for a top-level code-channel post (the original behavior)."""
     if not name or not text:
         return SlackCodeResult(ok=False, error="post_as_participant: name/text required")
+    # Real authorship first: with the persona's own token the line is a genuine
+    # message from them. Their id is marked as cast BEFORE posting so the echoed
+    # message event is ignored even if it beats this call back. On not_in_channel
+    # the bot invites them once and retries; any other failure falls through to
+    # the spoofed post below, so a chime-in never drops.
+    persona = await _persona_client_for(client, email_stem)
+    if persona is not None:
+        mark_cast_member(user_id)
+        # as_user=True: persona tokens from classic apps otherwise post as the APP
+        # ("xoxp_token_app_<name>"), not as the person.
+        pkw: dict[str, Any] = {"channel": channel_id, "text": text, "as_user": True}
+        if thread_ts:
+            pkw["thread_ts"] = thread_ts
+        for attempt in (1, 2):
+            try:
+                resp = await persona.chat_postMessage(**pkw)
+                return SlackCodeResult(ok=bool(resp.get("ok", True)),
+                                       data=dict(resp.data) if hasattr(resp, "data") else None)
+            except SlackApiError as e:
+                err = e.response.get("error") if e.response is not None else str(e)
+                if attempt == 1 and err == "not_in_channel" and user_id:
+                    try:
+                        await client.conversations_invite(channel=channel_id, users=user_id)
+                        continue
+                    except SlackApiError:
+                        pass
+                logger.warning("post_as_participant(%s) as-user failed: %s — spoofing instead", name, err)
+                break
+            except Exception as e:  # noqa: BLE001 — transport/other: spoof instead
+                logger.warning("post_as_participant(%s) as-user raised %s — spoofing instead", name, type(e).__name__)
+                break
     kwargs: dict[str, Any] = {"channel": channel_id, "text": text, "username": name}
     if thread_ts:
         kwargs["thread_ts"] = thread_ts
@@ -1012,6 +1092,7 @@ async def invite_participants(
         info = await resolve_participant(client, stem)
         if info and info.get("user_id"):
             uids.append(info["user_id"])
+            mark_cast_member(info["user_id"])
         else:
             misses.append(stem)
     if not uids:
@@ -1250,6 +1331,9 @@ def _save_state() -> None:
             "artifact": _CHANNEL_ARTIFACT,
             "scenario": _CHANNEL_SCENARIO,
             "recap_canvas": _CHANNEL_RECAP_CANVAS,
+            "image_swapped": sorted(_IMAGE_SWAPPED_CHANNELS),
+            "flags": {ch: sorted(f) for ch, f in _CHANNEL_FLAGS.items()},
+            "plan_canvas": _CHANNEL_PLAN_CANVAS,
         }
         tmp = f"{_STATE_PATH}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -1286,6 +1370,76 @@ def is_channel_patched(channel_id: str) -> bool:
 def clear_channel_patched(channel_id: str) -> None:
     """Reset the patched flag (e.g. when a fresh session starts in the channel)."""
     _PATCHED_CHANNELS.discard(channel_id)
+    _save_state()
+
+
+# ---------------------------------------------------------------------------
+# Image-swapped registry (the pre-baked "use this image" edit)
+# ---------------------------------------------------------------------------
+# A scenario with an image edit (IMAGE_EDIT_PHRASES + image_diff) swaps its hero art for a
+# hardcoded image when the user says "use this image". Tracked per channel so the
+# swap COMPOSES with the patch in either order: a /patch after the swap keeps the
+# new image, and a swap after the patch keeps the fixed copy. DURABLE (see above).
+_IMAGE_SWAPPED_CHANNELS: set[str] = set(_STATE.get("image_swapped", []))
+
+
+def mark_channel_image_swapped(channel_id: str) -> None:
+    """Record that this code channel's hero image has been swapped."""
+    if channel_id:
+        _IMAGE_SWAPPED_CHANNELS.add(channel_id)
+        _save_state()
+
+
+def is_channel_image_swapped(channel_id: str) -> bool:
+    """True if the "use this image" edit has been applied in this channel."""
+    return channel_id in _IMAGE_SWAPPED_CHANNELS
+
+
+def clear_channel_image_swapped(channel_id: str) -> None:
+    """Reset the image-swapped flag (fresh session)."""
+    _IMAGE_SWAPPED_CHANNELS.discard(channel_id)
+    _save_state()
+
+
+# ---------------------------------------------------------------------------
+# Per-channel story flags + the living Plan canvas
+# ---------------------------------------------------------------------------
+# Which story beats have happened in a code channel ("slide" added, "checked",
+# "recap" written) — the page and the living Plan are rendered from these, so
+# any beat order stays consistent. The Plan canvas id is remembered so each beat
+# edits the same canvas in place. DURABLE (see above).
+_CHANNEL_FLAGS: dict[str, set[str]] = {ch: set(f) for ch, f in (_STATE.get("flags") or {}).items()}
+_CHANNEL_PLAN_CANVAS: dict[str, str] = dict(_STATE.get("plan_canvas", {}))
+
+
+def set_channel_flag(channel_id: str, flag: str) -> None:
+    """Record that story beat `flag` has happened in this channel."""
+    if channel_id and flag:
+        _CHANNEL_FLAGS.setdefault(channel_id, set()).add(flag)
+        _save_state()
+
+
+def has_channel_flag(channel_id: str, flag: str) -> bool:
+    """True if story beat `flag` has happened in this channel."""
+    return flag in _CHANNEL_FLAGS.get(channel_id, set())
+
+
+def set_plan_canvas_id(channel_id: str, canvas_id: str) -> None:
+    """Record the channel's Plan canvas id (after the first publish)."""
+    if channel_id and canvas_id:
+        _CHANNEL_PLAN_CANVAS[channel_id] = canvas_id
+        _save_state()
+
+
+def get_plan_canvas_id(channel_id: str) -> str | None:
+    """The channel's Plan canvas id, or None if not yet published."""
+    return _CHANNEL_PLAN_CANVAS.get(channel_id)
+
+
+def clear_channel_story(channel_id: str) -> None:
+    """Reset the story flags + Plan canvas pointer (fresh session)."""
+    _CHANNEL_FLAGS.pop(channel_id, None)
+    _CHANNEL_PLAN_CANVAS.pop(channel_id, None)
     _save_state()
 
 

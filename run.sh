@@ -18,16 +18,24 @@ if [ ! -f tokens.json ]; then
   exit 1
 fi
 
-# Pull workspace_id / team_id / the single app id from tokens.json.
-read -r WORKSPACE_ID TEAM_ID APP_ID <<EOF
+# Pull workspace_id / team_id / the single app id / the persona from tokens.json.
+read -r WORKSPACE_ID TEAM_ID APP_ID PERSONA_SLUG <<EOF
 $(python3 -c "
 import json
 t = json.load(open('tokens.json'))
 bots = t.get('bots', {})
 app_id = next(iter(bots), '')
-print(t.get('workspace_id',''), t.get('team_id',''), app_id)
+persona = (bots.get(app_id) or {}).get('persona', '')
+print(t.get('workspace_id','') or '-', t.get('team_id','') or '-', app_id or '-', persona or '-')
 ")
 EOF
+[ "$WORKSPACE_ID" = "-" ] && WORKSPACE_ID=""
+[ "$TEAM_ID" = "-" ] && TEAM_ID=""
+[ "$APP_ID" = "-" ] && APP_ID=""
+# Which AI agent the bot presents as (personas/<slug>.md) — chosen in ./demo → Agent.
+if [ -z "$PERSONA" ] && [ "$PERSONA_SLUG" != "-" ]; then
+  export PERSONA="$PERSONA_SLUG"
+fi
 
 if [ -z "$WORKSPACE_ID" ] || [ -z "$APP_ID" ]; then
   echo "[run.sh] ERROR: tokens.json needs workspace_id and a bots[<app_id>] entry (see tokens.example.json)." >&2

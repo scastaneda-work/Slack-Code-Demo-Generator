@@ -45,6 +45,16 @@ CHECK_LABEL = "migration-safety"
 # the rollout/backfill dashboard. "diff" is always published.
 ARTIFACTS = {"diff", "dashboard"}
 
+# --- Routing ------------------------------------------------------------------
+# The @-mention phrases that open THIS story's code channel. Lower
+# ROUTE_PRIORITY is matched first (see scenarios.route_scenario).
+# The schema-change story.
+ROUTE_PRIORITY = 60
+ROUTE_KEYWORDS = (
+    "migration", "add a column", "add a last_login", "last_login_at",
+    "schema change", "alter table", "backfill", "add a field to",
+)
+
 
 # --- Code tab: the diff (pre-patch and post-patch) ---------------------------
 def base_diff() -> str:
@@ -291,7 +301,7 @@ def participant_beats() -> list[dict]:
     return [
         {"name": "Lauren", "phase": "arrival",
          "text": (":eyes: This is the \"last seen\" profile ask from product — keen to see how "
-                  "Claude sequences it safely.")},
+                  "{agent} sequences it safely.")},
         {"name": "Adam", "phase": "on_artifacts",
          "text": ("Right — `last_login_at` on `users`. The part I care about is it not locking "
                   "the table on backfill; let's see the check.")},

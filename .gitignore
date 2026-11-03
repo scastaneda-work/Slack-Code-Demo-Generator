@@ -1,19 +1,48 @@
-tokens.json
-tokens.json.tmp
+# --- Secrets: Slack bot/app/user tokens, env, keys --------------------------
+# tokens.json holds xoxb-/xapp-/xoxp- tokens. The pattern also catches copies
+# and backups (tokens.backup.json, tokens.json.tmp…); only the example is kept.
+tokens*.json
+tokens.json.*
+!tokens.example.json
 .env
-# per-SE demo content the builder writes (real names/emails)
+.env.*
+!.env.sample
+*.pem
+*.key
+
+# --- Your demo content (real names, emails, customers) ----------------------
+# Per-SE channel context the builder writes.
 personas/_demo_context.md
-# runtime state
+# Private demos: each one's whole folder (manifest, story, seed, docs, art), so a
+# customer demo stays on your machine and its name never appears in a shared file.
+demos/custom/
+# Private checks + Claude Code notes for demos that stay on your machine.
+qa_local/
+CLAUDE.local.md
+
+# --- Runtime state (channel ids, message timestamps, session data) ----------
 .slack_code_state.json
 .tag_state.json
-.slack/apps.json
-.slack/apps.dev.json
-.slack/cache/
-# derived
+.today_view_state.json
+*_state.json.tmp
+logs/
+
+# --- Demo manager (./demo): local state + restorable trash -------------------
+.demo_manager_state.*
+.trash/
+
+# --- Local tool folders ------------------------------------------------------
+.slack/
+.sf/
+.claude/settings.local.json
+.idea/
+.vscode/
+
+# --- Derived -----------------------------------------------------------------
 __pycache__/
 *.pyc
 .DS_Store
 .venv/
 .pytest_cache/
 .ruff_cache/
-logs/
+*.swp

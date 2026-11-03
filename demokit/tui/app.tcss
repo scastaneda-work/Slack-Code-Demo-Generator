@@ -1,0 +1,470 @@
+/* Demo manager — synthwave. Every colour is a variable set from palette.py
+   (via the theme), so the scheme lives in that one file:
+   $background $panel $surface $line $foreground $muted — the neutrals
+   $primary (hot pink: the thing to press)  $link / $good (cyan)
+   $title $subtitle $frame $sheet $warn $danger */
+
+Screen {
+    background: $background;
+}
+
+/* ---- banner + top bar ------------------------------------------------- */
+
+#banner {
+    margin-top: 1;
+}
+
+Screen.-short #banner {
+    display: none;
+}
+
+#topbar {
+    height: 1;
+    padding: 0 2;
+    margin-bottom: 1;
+}
+
+#app-title {
+    width: auto;
+}
+
+#bot-status {
+    width: 1fr;
+    text-align: right;
+}
+
+#bot-toggle {
+    margin-right: 2;
+}
+
+#more {
+    background: transparent;
+    color: $link;
+    border: none;
+    padding: 0;
+    text-style: none;
+}
+
+#more:hover, #more:focus {
+    background: transparent;
+    text-style: underline;
+}
+
+/* ---- sidebar ---------------------------------------------------------- */
+
+#body {
+    height: 1fr;
+    padding: 0 1;
+}
+
+#sidebar {
+    width: 30;
+    background: $panel;
+    border: round $frame;
+    border-title-color: $primary;
+    border-title-style: bold;
+    padding: 0 1;
+}
+
+#demos {
+    height: 1fr;
+    background: $panel;
+    border: none;
+    padding: 0;
+    scrollbar-size: 0 0;
+}
+
+#demos:focus {
+    border: none;
+    background-tint: $panel 0%;
+}
+
+#demos > .option-list--option-highlighted {
+    background: $primary 30%;
+    text-style: none;
+}
+
+/* Headers are disabled rows (so they can't be selected); don't dim them too —
+   each one sets its own colour. */
+#demos > .option-list--option-disabled {
+    color: $foreground;
+    text-style: none;
+}
+
+#demos:focus > .option-list--option-highlighted {
+    background: $primary;
+    color: $background;
+    text-style: bold;
+}
+
+#new-demo {
+    margin: 1 0 1 1;
+}
+
+/* ---- the page --------------------------------------------------------- */
+
+#detail {
+    width: 1fr;
+    margin-left: 1;
+    padding: 0 3 1 3;
+    border: round $line;
+    scrollbar-size: 1 1;
+    scrollbar-color: $line;
+    scrollbar-color-hover: $frame;
+    scrollbar-background: $background;
+}
+
+#page {
+    height: auto;
+    max-width: 88;
+}
+
+.title {
+    text-style: bold;
+    color: $title;
+    margin-top: 1;
+}
+
+.subtitle {
+    color: $subtitle;
+    margin-bottom: 1;
+}
+
+.summary {
+    margin-bottom: 1;
+}
+
+.note {
+    color: $muted;
+    margin-bottom: 1;
+}
+
+.warning {
+    color: $warn;
+    margin-bottom: 1;
+}
+
+.section {
+    margin-top: 1;
+    padding-bottom: 0;
+    border-bottom: solid $line;
+}
+
+.step {
+    height: auto;
+    margin-top: 1;
+}
+
+.step-head {
+    height: 1;
+}
+
+.step-body {
+    height: auto;
+    padding-left: 6;
+}
+
+.caption {
+    color: $muted;
+}
+
+.status, .trigger {
+    margin-top: 0;
+}
+
+.controls .status {
+    width: auto;
+    padding-top: 0;
+}
+
+.alt-action {
+    height: auto;
+    margin-top: 1;
+}
+
+.alt-action > * {
+    width: auto;
+    margin-right: 2;
+}
+
+.alt-action .alt-note {
+    width: 1fr;
+}
+
+.bot-line {
+    margin-top: 1;
+}
+
+.phrases {
+    margin: 0 0 1 0;
+}
+
+.status-row {
+    height: auto;
+}
+
+.status-row .status {
+    width: auto;
+}
+
+.controls {
+    height: auto;
+    margin-top: 1;
+}
+
+.controls > * {
+    margin-right: 2;
+}
+
+.options {
+    height: auto;
+    margin-top: 1;
+}
+
+.option {
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+
+.option > .toggle--button {
+    background: transparent;
+    color: $muted;
+}
+
+.option.-on > .toggle--button {
+    color: $good;
+}
+
+.option:focus > .toggle--label {
+    text-style: underline;
+    background: transparent;
+}
+
+.links {
+    height: auto;
+    margin-top: 1;
+}
+
+.links > * {
+    margin-right: 3;
+}
+
+Toggle:focus {
+    background: $surface;
+}
+
+.divider {
+    color: $line;
+    margin: 2 0 1 0;
+}
+
+#page .setting {
+    margin-top: 1;
+}
+
+.setting {
+    height: auto;
+    margin-top: 1;
+}
+
+.setting-label {
+    width: 1fr;
+}
+
+/* ---- buttons ---------------------------------------------------------- */
+
+Button {
+    min-width: 0;
+    padding: 0 2;
+    background: $surface;
+    color: $foreground;
+}
+
+Button:hover {
+    background: $line;
+}
+
+Button.-primary {
+    background: $primary;
+    color: $accent-text;
+    text-style: bold;
+}
+
+Button.-primary:hover {
+    background: $accent-hover;
+}
+
+Button.-error {
+    background: $danger;
+    color: $accent-text;
+    text-style: bold;
+}
+
+Button.link {
+    background: transparent;
+    color: $link;
+    padding: 0 0;
+    border: none;
+    text-style: none;
+}
+
+Button.link:hover, Button.link:focus {
+    background: transparent;
+    text-style: underline;
+}
+
+Button.link.danger {
+    color: $danger;
+}
+
+/* ---- activity drawer + hint bar --------------------------------------- */
+
+#activity {
+    height: 14;
+    margin: 0 1;
+    border: round $sheet;
+}
+
+#hints {
+    height: 1;
+    background: $panel;
+    padding: 0 1;
+}
+
+/* ---- sheets ----------------------------------------------------------- */
+
+ModalScreen {
+    align: center middle;
+    background: #000000 70%;
+}
+
+.sheet {
+    width: 64;
+    height: auto;
+    max-height: 90%;
+    background: $panel;
+    border: double $sheet;
+    padding: 1 3;
+}
+
+.sheet.wide {
+    width: 84;
+}
+
+.sheet.menu {
+    width: 46;
+}
+
+.sheet.doc {
+    width: 90%;
+    max-width: 120;
+    height: 90%;
+}
+
+.doc-scroll {
+    height: 1fr;
+    background: $background;
+    border: round $line;
+}
+
+.sheet-title {
+    text-style: bold;
+    color: $title;
+    margin-bottom: 1;
+}
+
+.sheet-body {
+    margin-bottom: 1;
+}
+
+.sheet-note {
+    color: $muted;
+    margin-top: 1;
+}
+
+.sheet-note-top {
+    color: $muted;
+    margin-bottom: 1;
+}
+
+.output-log {
+    height: 20;
+    background: $background;
+    border: round $line;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+.sheet-warn {
+    color: $warn;
+    margin: 1 0;
+}
+
+.sheet-error {
+    color: $danger;
+    height: auto;
+}
+
+.sheet-scroll {
+    height: auto;
+    max-height: 22;
+}
+
+.sheet-buttons {
+    height: auto;
+    margin-top: 1;
+    align-horizontal: right;
+}
+
+.sheet-buttons > * {
+    margin-left: 2;
+}
+
+.section-label {
+    color: $primary;
+    text-style: bold;
+    margin-top: 1;
+}
+
+.field-label {
+    color: $muted;
+    margin-top: 1;
+}
+
+#persona-box {
+    height: auto;
+}
+
+#persona-set {
+    border: none;
+    background: transparent;
+    padding: 0;
+    width: 100%;
+    height: auto;
+}
+
+#persona-set RadioButton {
+    background: transparent;
+}
+
+#more-list, #trash-list {
+    background: $panel;
+    border: none;
+    height: auto;
+    max-height: 14;
+}
+
+#more-list > .option-list--option-highlighted, #trash-list > .option-list--option-highlighted {
+    background: $primary;
+    color: $background;
+}
+
+Input {
+    background: $background;
+    border: round $line;
+}
+
+Input:focus {
+    border: round $primary;
+}

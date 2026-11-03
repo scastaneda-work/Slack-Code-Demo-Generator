@@ -1,0 +1,7 @@
+name     = "Freeform build"
+customer = "Built-in"
+summary  = "No scripted story: the agent builds whatever you ask for (a snake game, a pricing page) into the Code and Preview tabs, then edits it live."
+surfaces  = ["slack_code"]
+scenarios = ["freeform"]
+trigger   = "can you create a simple html based snake game for me?"
+example   = true

@@ -4,6 +4,8 @@ slack-cli-hooks<1.0.0
 claude-agent-sdk>=0.2.82
 aiohttp>=3.13.5
 python-dotenv==1.2.2
+textual>=8.2,<9
 
 pytest
+pytest-asyncio
 ruff==0.15.12

@@ -52,6 +52,17 @@ CHECK_LABEL = "durability"
 # "diff" is always published; listing it here is for clarity.
 ARTIFACTS = {"diff", "dashboard"}
 
+# --- Routing ------------------------------------------------------------------
+# The @-mention phrases that open THIS story's code channel. Lower
+# ROUTE_PRIORITY is matched first (see scenarios.route_scenario).
+# Before the generic stories: "refactor the billing webhook" also contains
+# "refactor", but it's the billing story, so its specific phrases match first.
+ROUTE_PRIORITY = 30
+ROUTE_KEYWORDS = (
+    "billing webhook", "stripe webhook", "webhook refactor", "durable queue",
+    "billing cron", "webhook to a queue", "webhook durability",
+)
+
 
 # --- Code tab: the diff (pre-patch and post-patch) ---------------------------
 def base_diff() -> str:
@@ -283,7 +294,7 @@ def participant_beats() -> list[dict]:
     return [
         {"name": "Ralph", "phase": "arrival",
          "text": (":eyes: Following — a dropped payment event turning into month-end finance "
-                  "toil is exactly what I want gone. Curious what Claude proposes.")},
+                  "toil is exactly what I want gone. Curious what {agent} proposes.")},
         {"name": "Adam", "phase": "on_artifacts",
          "text": ("That's the inline handler I flagged. If it's moving `process_event` onto a "
                   "queue with retries and a DLQ, that's the fix.")},

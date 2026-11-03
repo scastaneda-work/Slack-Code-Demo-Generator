@@ -24,6 +24,7 @@ Contract every Tag scenario module must satisfy (duck-typed; see `_template.py`)
   PARTICIPANTS: list[dict]                     # OPTIONAL — origin-thread humans ({name, email_stem, role})
   def result_line() -> str | None              # the closing "✅ Up: #… " line, or None (no PR)
   OPEN_IN_CLAUDE_URL: str                       # inert visual-prop deep link (Slack has no real one)
+  ROUTE_PRIORITY: int                          # OPTIONAL — lower is matched first (default 50)
 
 A **turn delta** (one per follow-up / correction) is a dict:
   {
@@ -39,16 +40,50 @@ The AUTO-ADVANCE loop (agent/tagsession + slack_tag) walks the checklist forward
 a timer without any of these deltas; `turn_deltas()` only fire when a HUMAN posts a
 follow-up in the thread (a correction), interrupting the auto-advance to reprioritize.
 
-To add a Tag demo: copy `_template.py` -> `<slug>.py`, fill the constants, add
-`<slug>` to `_KNOWN` below. No logic changes — pure data.
+To add a Tag demo: copy `_template.py` -> `<slug>.py` and fill the constants. The
+module registers itself (every non-underscore module here, or in a private
+demo's `demos/custom/<id>/scenarios_tag/`, is discovered at import), so there is
+no list to edit. No logic changes — pure data.
 """
 from __future__ import annotations
 
 import importlib
+import logging
+import pkgutil
 from types import ModuleType
 
-# The Tag scenarios shipped in-repo. A slug must map to a module in this package.
-_KNOWN = {"scheduled_exports", "blog_update"}
+from demokit.custom import package_dirs
+from demokit.state import hidden_slugs
+
+_log = logging.getLogger(__name__)
+
+# Private demos keep their Tag stories in demos/custom/<id>/scenarios_tag/.
+__path__ += package_dirs(__name__)
+
+_DEFAULT_PRIORITY = 50
+
+
+def _discover() -> tuple[set[str], dict[str, str]]:
+    """Import every Tag scenario module here (``_``-prefixed ones like
+    ``_template`` are skipped). A module that fails to import is left out and
+    recorded — routing must never crash on one broken story."""
+    known: set[str] = set()
+    errors: dict[str, str] = {}
+    for info in pkgutil.iter_modules(__path__):
+        if info.name.startswith("_") or info.ispkg:
+            continue
+        try:
+            importlib.import_module(f"{__name__}.{info.name}")
+        except Exception as e:  # noqa: BLE001 — a broken scenario must not crash routing
+            errors[info.name] = f"{type(e).__name__}: {e}"
+            _log.error("tag scenario %r failed to import: %s", info.name, errors[info.name])
+            continue
+        known.add(info.name)
+    return known, errors
+
+
+# The registered Tag scenarios (slug == module name) and any that failed to import.
+_KNOWN, DISCOVERY_ERRORS = _discover()
 
 
 def load_tag_scenario(slug: str | None) -> ModuleType | None:
@@ -67,18 +102,19 @@ def load_tag_scenario(slug: str | None) -> ModuleType | None:
 
 
 # Keyword -> Tag scenario routing. These are CURATED and must stay DISJOINT from the
-# Slack Code keyword sets (agent.slackcode.intent_keywords + scenarios._ROUTE_KEYWORDS):
-# a phrase claimed here routes to the lightweight in-thread Tag surface INSTEAD of a
-# code channel, so only claim phrases the Tag scenarios genuinely own. Matched
-# deterministically, most-specific first. Keep in step with each scenario's KEYWORDS.
+# Slack Code keyword sets (agent.slackcode.intent_keywords + each scenarios/<slug>.py
+# ROUTE_KEYWORDS): a phrase claimed here routes to the lightweight in-thread Tag
+# surface INSTEAD of a code channel, so only claim phrases the Tag scenarios
+# genuinely own. Matched deterministically: lowest ROUTE_PRIORITY first, ties by
+# slug. Demos the SE hid in ./demo are skipped.
 def _route_table() -> list[tuple[str, tuple[str, ...]]]:
-    table: list[tuple[str, tuple[str, ...]]] = []
-    for slug in _KNOWN:
+    rows = []
+    for slug in _KNOWN - hidden_slugs("tag"):
         mod = load_tag_scenario(slug)
         kws = tuple(getattr(mod, "KEYWORDS", ())) if mod else ()
         if kws:
-            table.append((slug, kws))
-    return table
+            rows.append((int(getattr(mod, "ROUTE_PRIORITY", _DEFAULT_PRIORITY)), slug, kws))
+    return [(slug, kws) for _, slug, kws in sorted(rows)]
 
 
 def route_tag_scenario(task_text: str) -> str:

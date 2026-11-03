@@ -1,0 +1,7 @@
+name     = "Flaky login test"
+customer = "Acme"
+summary  = "Everyday-engineer story: fix the login_redirect test that fails one CI run in five, for real."
+surfaces  = ["slack_code"]
+scenarios = ["flaky_test"]
+trigger   = "the login_redirect test is flaky, find the root cause and fix it for real"
+example   = true

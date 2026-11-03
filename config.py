@@ -16,7 +16,7 @@ TOKENS_PATH = ROOT / "tokens.json"
 SLACK_BASE_URL = "https://www.slack.com/api/"
 
 
-def _check_tokens_perms() -> None:
+def _check_tokens_perms(path: Path = TOKENS_PATH) -> None:
     """Refuse to load tokens.json if it's group/world-readable.
 
     tokens.json holds real Slack credentials — if anything else on the
@@ -26,22 +26,22 @@ def _check_tokens_perms() -> None:
     """
     if os.environ.get("CLAUDE_DEMO_SKIP_TOKEN_PERM_CHECK") == "1":
         return
-    mode = TOKENS_PATH.stat().st_mode
+    mode = path.stat().st_mode
     if mode & 0o077:
         raise PermissionError(
-            f"{TOKENS_PATH} is readable by group or other "
-            f"(mode={oct(mode & 0o777)}). Run: chmod 600 {TOKENS_PATH}\n"
+            f"{path} is readable by group or other "
+            f"(mode={oct(mode & 0o777)}). Run: chmod 600 {path}\n"
             f"To bypass once: CLAUDE_DEMO_SKIP_TOKEN_PERM_CHECK=1 <command>"
         )
 
 
-def load_tokens() -> dict[str, Any]:
-    _check_tokens_perms()
-    with TOKENS_PATH.open() as f:
+def load_tokens(path: Path = TOKENS_PATH) -> dict[str, Any]:
+    _check_tokens_perms(path)
+    with path.open() as f:
         return json.load(f)
 
 
-def save_tokens(tokens: dict[str, Any]) -> None:
+def save_tokens(tokens: dict[str, Any], path: Path = TOKENS_PATH) -> None:
     """Write tokens.json atomically with owner-only permissions.
 
     Atomic: write to a sibling tmp file, then os.replace() — a crash mid-write
@@ -49,12 +49,12 @@ def save_tokens(tokens: dict[str, Any]) -> None:
     on the machine can't read the demo credentials. Applied before the
     rename so the final file is never briefly world-readable.
     """
-    tmp = TOKENS_PATH.with_suffix(".json.tmp")
+    tmp = path.with_suffix(".json.tmp")
     with tmp.open("w") as f:
         json.dump(tokens, f, indent=2)
         f.write("\n")
     os.chmod(tmp, 0o600)
-    os.replace(tmp, TOKENS_PATH)
+    os.replace(tmp, path)
 
 
 def _sole_or_first_bot(tokens: dict[str, Any]) -> dict[str, Any]:

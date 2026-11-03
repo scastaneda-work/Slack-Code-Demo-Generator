@@ -1,0 +1,7 @@
+name     = "Checkout latency incident"
+customer = "Acme"
+summary  = "P1 incident for an SRE audience: roll back payment-service and fix the Stripe retry storm."
+surfaces  = ["slack_code"]
+scenarios = ["checkout_incident"]
+trigger   = "roll back the payment-service deploy and fix the retry storm"
+example   = true

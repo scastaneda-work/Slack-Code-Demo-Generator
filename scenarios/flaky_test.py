@@ -43,6 +43,16 @@ CHECK_LABEL = "flake-stability"
 # flake-rate dashboard. "diff" is always published.
 ARTIFACTS = {"diff", "dashboard"}
 
+# --- Routing ------------------------------------------------------------------
+# The @-mention phrases that open THIS story's code channel. Lower
+# ROUTE_PRIORITY is matched first (see scenarios.route_scenario).
+# The everyday CI-flake story.
+ROUTE_PRIORITY = 50
+ROUTE_KEYWORDS = (
+    "flaky", "flake", "flakey", "login_redirect", "login redirect test",
+    "re-run", "rerun the test", "test is failing intermittently",
+)
+
 
 # --- Code tab: the diff (pre-patch and post-patch) ---------------------------
 def base_diff() -> str:
@@ -236,7 +246,7 @@ def participant_beats() -> list[dict]:
     return [
         {"name": "Adam", "phase": "arrival",
          "text": (":eyes: Please let this be the end of me hitting re-run on `login_redirect`. "
-                  "Watching what Claude finds.")},
+                  "Watching what {agent} finds.")},
         {"name": "Ralph", "phase": "on_artifacts",
          "text": ("~31 re-runs a week just on this one test — if Claude's found the actual race, "
                   "that's real CI minutes back.")},
