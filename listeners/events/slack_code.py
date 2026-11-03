@@ -2794,28 +2794,50 @@ async def run_view_probe(
     # --- Canvas (CONFIRMED flow): canvases.create -> setView(type=canvas, canvas_id).
     # A canvas view attaches an existing canvas by id; it does NOT take inline
     # content (every inline variant returned missing_required_arg because the
-    # missing arg was canvas_id). publish_canvas_view does the two-step; this
-    # proves the flow still works and leaves a throwaway probe canvas tab.
-    canvas_r = await slackcode.publish_canvas_view(
-        client, channel_id, title="Probe Canvas",
-        markdown="## Probe\nConfirmed two-step canvas flow.",
-        view_key="probe_canvas", name="Probe Canvas", access_level="comment")
-    _rec("canvas/publish_canvas_view(create+attach)", canvas_r)
+    # missing arg was canvas_id).
+    #
+    # BUG FOUND AND FIXED (2026-11-02 live run): this used to call
+    # publish_canvas_view() unconditionally on every probe run, which always
+    # calls create_canvas() — a FRESH canvas (new file_id) every time. The
+    # follow-up setCanvasContent() then always edited that same brand-new,
+    # comment-free canvas, so a second probe run could NEVER test anchor
+    # survival across runs no matter how many comments a human added — the
+    # canvas being edited was never the one they commented on. Confirmed live:
+    # two consecutive probe runs produced two different file_ids
+    # (F0CDVF0C1RD, then F0CDVG3KL3H) under the same view_key, both listed as
+    # separate session_views entries.
+    #
+    # Fix: look up an existing "probe_canvas" view via listViews/views_from
+    # first (also fixed — see that helper's docstring for the session_views
+    # envelope-key bug) and reuse its canvas_id with setCanvasContent if found;
+    # only fall back to publish_canvas_view (create+attach) on the first run.
+    existing_views = slackcode.views_from(await slackcode.list_views(client, channel_id))
+    existing_canvas = next(
+        (v for v in existing_views if v.get("type") == "canvas" and v.get("name") == "Probe Canvas"),
+        None,
+    )
+    canvas_id = existing_canvas.get("file_id") if existing_canvas else None
+    if canvas_id:
+        lines.append(f"canvas: reusing existing Probe Canvas (file_id={canvas_id}) instead of creating a new one")
+    else:
+        canvas_r = await slackcode.publish_canvas_view(
+            client, channel_id, title="Probe Canvas",
+            markdown="## Probe\nConfirmed two-step canvas flow.",
+            view_key="probe_canvas", name="Probe Canvas", access_level="comment")
+        _rec("canvas/publish_canvas_view(create+attach)", canvas_r)
+        canvas_id = (canvas_r.data or {}).get("canvas_id") if canvas_r.ok else None
 
-    # --- setCanvasContent (UNCONFIRMED: does it preserve a comment's anchor?
-    # This probe only confirms the call succeeds and the content lands — it
-    # canNOT confirm anchor preservation unsupervised, since that needs a human
-    # to add a comment to the probe canvas FIRST. Re-run this probe a second
-    # time, after adding a comment to "Probe Canvas" in Slack, and check by eye
-    # that the comment is still anchored to the right line afterward.)
-    canvas_id = (canvas_r.data or {}).get("canvas_id") if canvas_r.ok else None
+    # --- setCanvasContent: confirms the call succeeds and the content lands.
+    # Anchor preservation itself still needs a human: add a comment to "Probe
+    # Canvas" in Slack, re-run this probe (now reuses the SAME canvas_id above),
+    # then check by eye that the comment is still anchored to the right line.
     if canvas_id:
         _rec("setCanvasContent(update, check comment anchors by eye)",
              await slackcode.set_canvas_content(
                  client, canvas_id=canvas_id,
                  markdown="## Probe\nUpdated by setCanvasContent — comment anchors should survive this."))
     else:
-        lines.append("setCanvasContent: skipped (no canvas_id from publish_canvas_view)")
+        lines.append("setCanvasContent: skipped (no canvas_id found or created)")
 
     # --- Interactive context-bar item (click it, read the inbound event) ---
     _rec("setProperties/context_bar_item_type=action",

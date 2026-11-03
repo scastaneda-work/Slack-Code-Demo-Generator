@@ -513,7 +513,7 @@ def _run_self_test() -> int:
         _clean_agent_resource,
         _clean_commands,
         _clean_summary_message,
-        _views_from,
+        views_from,
     )
     from agent.slackcode import SlackCodeResult as _SCR
 
@@ -562,14 +562,18 @@ def _run_self_test() -> int:
     if not ar_ok:
         fail += 1
 
-    # _views_from tolerates envelope key naming; [] on a non-ok result.
+    # views_from tolerates envelope key naming; [] on a non-ok result. session_views
+    # is checked FIRST (confirmed live 2026-11-02 as the real API's actual key —
+    # the old code checked only views/agent_session_views and silently got [] against
+    # the real listViews response, breaking view-cap enforcement).
     vf_ok = (
-        _views_from(_SCR(ok=True, data={"views": [{"view_key": "a"}, "bad", {"view_key": "b"}]})) ==
+        views_from(_SCR(ok=True, data={"session_views": [{"view_key": "s"}]})) == [{"view_key": "s"}]
+        and views_from(_SCR(ok=True, data={"views": [{"view_key": "a"}, "bad", {"view_key": "b"}]})) ==
         [{"view_key": "a"}, {"view_key": "b"}]
-        and _views_from(_SCR(ok=True, data={"agent_session_views": [{"view_key": "c"}]})) == [{"view_key": "c"}]
-        and _views_from(_SCR(ok=False, error="feature_disabled")) == []
+        and views_from(_SCR(ok=True, data={"agent_session_views": [{"view_key": "c"}]})) == [{"view_key": "c"}]
+        and views_from(_SCR(ok=False, error="feature_disabled")) == []
     )
-    print(f"[{'PASS' if vf_ok else 'FAIL'}] slackcode._views_from/tolerant-envelope")
+    print(f"[{'PASS' if vf_ok else 'FAIL'}] slackcode.views_from/tolerant-envelope")
     if not vf_ok:
         fail += 1
 

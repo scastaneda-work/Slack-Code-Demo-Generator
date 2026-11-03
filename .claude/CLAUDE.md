@@ -97,6 +97,13 @@ it's there.
 
 ## Things to get right
 
+- **A living canvas that re-renders (e.g. the Plan canvas) will blow away any
+  comment left on it.** Confirmed live: `set_canvas_content()` does a
+  whole-document `replace`, so if an SE or a customer comments on a canvas
+  mid-demo, the NEXT refresh makes Slack show that comment as "anchored to
+  deleted content." Don't invite comments on a canvas you expect to keep
+  refreshing — say so, or route feedback into the channel instead. See
+  `docs/slack-code-api-audit.md` for the live-probe evidence.
 - **Slack mrkdwn bold is single-asterisk** `*bold*` — never `**bold**` (renders
   as literal asterisks in Slack). Applies to personas, scenarios, canvases.
 - **Slack Code is a beta.** It needs the SE's workspace to have it enabled for

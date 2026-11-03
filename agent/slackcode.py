@@ -441,13 +441,24 @@ async def get_canvas(client: AsyncWebClient, channel_id: str, *, view_key: str |
 
 
 async def set_canvas_content(client: AsyncWebClient, *, canvas_id: str, markdown: str) -> SlackCodeResult:
-    """Replace a canvas's whole content in place, preserving comment anchors, via
-    canvases.edit with a `replace` operation (public method, needs canvases:write —
-    which the canvas-view flow already requires). This is the "living plan doc"
-    edit path: the attached view tab re-renders to the new content and keeps its
-    view_id/comments, so it's preferred over re-creating + re-attaching a canvas
-    on every follow-up. Identify the canvas by the canvas_id returned from
-    create_canvas / publish_canvas_view.
+    """Replace a canvas's WHOLE content in place via canvases.edit with a
+    document-level `replace` operation (no section_id — public method, needs
+    canvases:write, which the canvas-view flow already requires). The attached
+    view tab re-renders to the new content and keeps its view_id, so it's
+    preferred over re-creating + re-attaching a canvas on every follow-up.
+    Identify the canvas by the canvas_id returned from create_canvas /
+    publish_canvas_view.
+
+    CONFIRMED LIVE (2026-11-02), CONTRADICTING THIS FUNCTION'S OLD CLAIM: a
+    document-level `replace` does NOT preserve comment anchors — it blows away
+    every existing section, so Slack shows a comment anchored to the old
+    content as anchored to now-deleted content. (`canvases.edit`'s `replace`
+    CAN target a single section via `section_id` instead of the whole
+    document, per docs.slack.dev/reference/methods/canvases.edit — but doing
+    that needs canvases.sections.lookup to find the right section_id first,
+    which this helper does not do. If per-section, anchor-preserving edits are
+    ever needed, build that on top of sections.lookup + a section-scoped
+    replace; whole-document replace is NOT that path.)
 
     (The beta also exposes agents.conversations.setCanvasContent, but its exact
     contract is unconfirmed; canvases.edit is the confirmed, documented path.)"""
@@ -465,17 +476,19 @@ async def list_views(client: AsyncWebClient, channel_id: str) -> SlackCodeResult
     return await _call(client, "agents.conversations.listViews", channel_id=channel_id)
 
 
-def _views_from(result: SlackCodeResult) -> list[dict[str, Any]]:
+def views_from(result: SlackCodeResult) -> list[dict[str, Any]]:
     """Pull the view array out of a listViews result, tolerant of key naming.
 
-    The managed property is `agent_session_views`; the listViews method is
-    documented to return the same entries. We accept a few plausible envelope
-    keys (`views` / `agent_session_views` / `data`) so a shape tweak in the beta
-    doesn't silently break cap enforcement. Returns [] on a non-ok result.
+    CONFIRMED live (2026-11-02 probe): the real envelope key is `session_views`,
+    not `views` or `agent_session_views` — those two keys are absent/empty on a
+    real response, which silently broke every caller of this helper (cap
+    enforcement, canvas-reuse lookups) until this fix. Kept the other keys as
+    fallbacks in case the beta's shape still varies by call path. Returns [] on
+    a non-ok result.
     """
     if not result.ok or not result.data:
         return []
-    for key in ("views", "agent_session_views", "data"):
+    for key in ("session_views", "views", "agent_session_views", "data"):
         v = result.data.get(key)
         if isinstance(v, list):
             return [it for it in v if isinstance(it, dict)]
@@ -517,7 +530,7 @@ async def ensure_view_capacity(client: AsyncWebClient, channel_id: str, *, view_
         # Can't read the array (feature gated, or listViews unsupported): don't
         # block the publish — setView will upsert regardless.
         return SlackCodeResult(ok=True, data={"skipped": "listViews unavailable"})
-    views = _views_from(lv)
+    views = views_from(lv)
     keys = {v.get("view_key") for v in views if v.get("view_key")}
     if view_key in keys or len(views) < MAX_VIEWS:
         return SlackCodeResult(ok=True, data={"pruned": None})
