@@ -96,13 +96,30 @@ Present the menu and recommend based on the story. The SE can override.
 `ARTIFACTS` in the scenario = the subset you include (always contains `"diff"`).
 Let the story drive the default; confirm with the SE.
 
+## Before you write anything: private or shared?
+
+If the demo is for a real customer, ask whether it should stay on their machine
+only (usually yes; if they're unsure, make it private). That decides where every
+file goes:
+
+- **Private** — the whole demo lives in one git-ignored folder, `demos/custom/<id>/`
+  (kebab-case id), laid out like the repo: `scenarios/<slug>.py` (+
+  `scenarios/assets/`), `scenarios_tag/<slug>.py`, `channels/seed_<slug>.py`,
+  `docs/`, and the manifest as `demo.toml`. Nothing has to be added to
+  `.git/info/exclude`, and no shared file names the customer.
+- **Shared** — the repo's own folders, with the manifest as `demos/<id>.toml`.
+  Only for a fictional example that's meant to go back to the shared repo.
+
+Steps 4–7 give the shared paths. For a private demo, put each file at the same
+path inside `demos/custom/<id>/`. See "Private demos" in `.claude/CLAUDE.md`.
+
 ## Step 4 — Author the Slack Code scenario
 
 Copy `scenarios/_template.py` → `scenarios/<slug>.py` and fill EVERY member. The
 contract (duck-typed, enforced by `qa.py --self-test`):
 
-Required always: `SLUG` (== module name == `_KNOWN` entry), `REPO`, `REPO_URL`,
-`BRANCH_PREFIX`, `PR_URL`, `CHECK_LABEL`, `ARTIFACTS` (set, contains `"diff"`).
+Required always: `SLUG` (== module name), `REPO`, `REPO_URL`, `BRANCH_PREFIX`,
+`PR_URL`, `CHECK_LABEL`, `ARTIFACTS` (set, contains `"diff"`), `ROUTE_KEYWORDS`.
 
 Required for a scripted (seeded) scenario:
 - `base_diff() -> str` (starts `"diff --git"`) — author the flaw here.
@@ -117,7 +134,17 @@ Required for a scripted (seeded) scenario:
   dict that MUST include a non-generic `"open"` line (the session-start spinner).
 - `PARTICIPANTS: list[dict]` (1–2, each `{name, email_stem, role}`) and
   `participant_beats() -> list[dict]` (each `{name, phase, text}`,
-  `phase ∈ {"arrival","on_artifacts"}`, ≥1 `arrival`, no `**`).
+  `phase ∈ {"arrival","on_artifacts","on_asset"}`, ≥1 `arrival`, no `**`).
+  `on_asset` is optional: a designer's review posted once when the SE shares an
+  asset link (e.g. Canva) — pair it with the image-edit hooks below.
+
+Optional asset beat ("use this image"): `IMAGE_EDIT_PHRASES`, `image_diff(patched)`,
+`image_edit_report(patched)`, and `preview_html(patched, *, image=False)`. A bare
+asset-link share is never handed to the live agent; the phrase swaps in the
+hardcoded art. Optional on-story lines: `opening_reply()`, `first_pass_hint()`,
+`metrics_report()`. A second pre-baked edit (`SLIDE_EDIT_PHRASES`, `slide_diff`,
+`slide_edit_report`) and a living Plan canvas (`plan_canvas`) are also available;
+the full list of optional hooks is in the `scenarios/__init__.py` docstring.
 
 Conditional on `ARTIFACTS`:
 - if `"dashboard"`: `dashboard_blocks() -> list[dict]` (valid Block Kit — validate
@@ -128,13 +155,18 @@ Conditional on `ARTIFACTS`:
   differ between `preview_html(False)` and `preview_html(True)`. A previewable
   scenario also needs `seed_filename() -> str` (non-empty).
 
-Then register the slug:
-- add `"<slug>"` to the `_KNOWN` set in `scenarios/__init__.py`;
-- add a `("<slug>", ("keyword", "phrases", ...))` entry to `_ROUTE_KEYWORDS` in
-  the same file — put SPECIFIC phrases before generic ones. The trigger phrase in
-  the seed must contain a routing keyword AND an intent keyword (so
-  `is_coding_task` opens a channel — e.g. "implement", "build", "fix", "refactor",
-  "roll back", "migrate").
+Then set its routing, in the scenario module itself (there's no list to register
+in: every module in `scenarios/`, and in each `demos/custom/<id>/scenarios/`, is
+discovered at import):
+- `ROUTE_KEYWORDS` — the specific phrases that open THIS story ("checkout redesign",
+  "card form"). No bare customer name: it would steal that customer's other
+  stories' openers.
+- `ROUTE_PRIORITY` — lower is matched first. The template's 15 beats every
+  generic example (website_redesign is 90). Only change it if your keywords
+  overlap another story's; check with `./demo route "<phrase>"`.
+- The trigger phrase must contain a routing keyword AND an intent keyword (so
+  `is_coding_task` opens a channel — e.g. "implement", "build", "fix",
+  "refactor", "roll back", "migrate").
 
 Study `scenarios/website_redesign.py` (preview + dashboard + FAQ) and
 `scenarios/billing_webhook.py` (diff + dashboard, no preview) as worked references
@@ -152,6 +184,8 @@ Copy `channels/seed_welloguard_redesign.py` → `channels/seed_<slug>.py` and ad
   optional icon_url) — do NOT require per-persona user tokens.
 - The roster invite is behind the `--invite` flag (OFF by default) and only runs
   when the SE passes it. Keep that gate; don't invite by default.
+- Keep its `ROOT = next(...)` line: it finds the repo's `config.py` from either
+  `channels/` or `demos/custom/<id>/channels/`.
 Keep it valid Python.
 
 ## Step 6 — (If building Claude Tag) author the Tag scenario
@@ -160,11 +194,35 @@ Copy `scenarios_tag/_template.py` → `scenarios_tag/<slug>.py`, fill `SLUG`,
 `KEYWORDS` (a tuple — MUST stay disjoint from the Slack Code keywords so a build
 task isn't stolen into the Tag surface), `COMMITMENT`, `OPEN_IN_CLAUDE_URL`,
 optional `PARTICIPANTS`, `initial_plan()` (a taskplan-shaped checklist, ≤8 steps),
-`turn_deltas()`, and `result_line()`. Add `"<slug>"` to `_KNOWN` in
-`scenarios_tag/__init__.py`. Study `scenarios_tag/scheduled_exports.py` and
-`scenarios_tag/blog_update.py`.
+`turn_deltas()`, and `result_line()`. It registers itself (no list to edit).
+Study `scenarios_tag/scheduled_exports.py` and `scenarios_tag/blog_update.py`.
 
-## Step 7 — Verify
+## Step 7 — Write the demo manifest
+
+Create `demos/<id>.toml` (kebab-case id, e.g. `acme-checkout-redesign`), or
+`demos/custom/<id>/demo.toml` for a private demo, so `./demo` lists the demo,
+runs its seed, and can hide or delete it as one unit. Copy the example in
+`demos/README.md` and fill it in. Every path in it is repo-relative, so a private
+demo's start with `demos/custom/<id>/`:
+- `name`, `customer`, `summary` (the story + the flaw the check catches),
+  `surfaces`;
+- `scenarios` / `tag_scenarios` — the slugs you authored;
+- `trigger` — the phrase the SE types after `@<bot>` (no `@` prefix);
+- `channels` — the seed's `CHANNEL_NAME`;
+- `files` — the seed script, `docs/demos/<id>/` if you wrote docs, and any
+  `scenarios/assets/<prefix>_*` art (skip it for a private demo: it owns its
+  whole folder);
+- `docs` — always write a short talk track (`docs/talk-track.md` inside a
+  private demo's folder, `docs/demos/<id>/talk-track.md` for a shared one: what
+  the SE types at each beat, what appears, what to say) and list it as
+  `{ label = "Talk track", path = "<repo-relative path>" }`. Markdown docs open
+  in a reader inside `./demo`, so the SE can follow it there;
+- one `[[actions]]` entry: `id = "post-backstory"`, `run =
+  ["channels/seed_<slug>.py", "--create"]`, the `--invite` option ONLY if the SE
+  opted into roster invites, and a `repeat_warning` that a second run posts a
+  second copy of the thread.
+
+## Step 8 — Verify
 
 Run (in the SE's Terminal — see the sandbox notes in SETUP.md):
 
@@ -172,20 +230,24 @@ Run (in the SE's Terminal — see the sandbox notes in SETUP.md):
 .venv/bin/python qa.py --self-test
 ```
 
-It runs the full contract loop over every slug in `_KNOWN`, including your new
-one. Fix anything it flags and re-run until exit 0 with no `[FAIL]`. Common
+It runs the full contract loop over every discovered scenario, including your
+new one, and checks every manifest (files exist, the trigger opens its own
+story). Fix anything it flags and re-run until exit 0 with no `[FAIL]`. Common
 misses: dashboard/recap numbers disagree; `recap_canvas` isn't exactly 5 `##`
 sections; a `**` bold slipped in; `_THINKING["open"]` is generic or missing;
-`preview_html` isn't self-contained or doesn't change when patched.
+`preview_html` isn't self-contained or doesn't change when patched; the trigger
+routes to another story (raise priority or sharpen `ROUTE_KEYWORDS`); a
+`[WARN] … belongs to a demo` means the manifest is missing.
 
-## Step 8 — Hand off the run commands
+## Step 9 — Hand off the run commands
 
-Tell the SE exactly how to run it (in their own Terminal):
+Tell the SE where their demo lives now: run `./demo` in their Terminal, pick it
+from the list, and press *Post backstory* (tick "Also invite the real cast" if
+they opted in). The command-line equivalent, and the bot launch:
 
 ```bash
-.venv/bin/python channels/seed_<slug>.py --create          # stage the backstory (spoofed voices)
-# add --invite to ALSO try adding the real cast to the roster (only if they opted in):
-#   .venv/bin/python channels/seed_<slug>.py --create --invite
+./demo run <id> post-backstory              # stage the backstory (spoofed voices)
+./demo run <id> post-backstory --invite     # …and try adding the real cast (only if they opted in)
 SLACK_CODE_ENABLED=1 ./run.sh
 ```
 

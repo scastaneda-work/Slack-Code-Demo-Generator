@@ -42,6 +42,9 @@ ARTIFACTS = {"diff", "preview"}
 # check/patch/recap actions apply (they don't, for a freeform channel).
 SEED = False
 
+# No ROUTE_KEYWORDS: freeform is the router's fallback for any build task no
+# other story claims (see scenarios.route_scenario).
+
 
 def seed_filename() -> str:
     """Freeform channels have no seed; the engine derives the filename from the

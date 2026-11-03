@@ -72,6 +72,12 @@ def _run_self_test() -> int:
     import os as _os
     _os.environ.setdefault("SLACK_CODE_PREBUILT_DWELL_S", "0")
 
+    # Route against the FULL scenario set: demos the SE hid in ./demo must not
+    # change what this offline suite expects. Point the state file somewhere empty.
+    import tempfile as _tempfile
+    from demokit import state as _demo_state
+    _demo_state.STATE_PATH = Path(_tempfile.mkdtemp()) / "state.json"
+
     extractor_fixtures: list[tuple[str, str, str, bool]] = [
         # (label, text, expected_tier, expects_blocks)
         (
@@ -220,8 +226,9 @@ def _run_self_test() -> int:
 
     # _build_context_bar PROGRESSES through the story arc via `phase`, adding/
     # removing chips to track where the work stands (no fixed count). Link chips
-    # (info + url) for orientation, plus ONE item_type:"action" chip ("Create PR")
-    # from the working phase on — whose click should deliver a code_channel_action.
+    # (info + url) for orientation, a url-less token-usage chip in every phase, plus
+    # ONE item_type:"action" chip ("Create PR") in the working phase — whose click
+    # should deliver a code_channel_action. It yields to the token chip at the cap.
     from listeners.events.slack_code import _build_context_bar
 
     _cfg_bar = SlackCodeConfig(enabled=True)
@@ -230,38 +237,55 @@ def _run_self_test() -> int:
         return [i["key"] for i in _build_context_bar(_cfg_bar, branch="feat/x", phase=phase)]
 
     phase_ok = (
-        _keys("open") == ["repo", "branch"]
-        and _keys("working") == ["repo", "branch", "pr", "create-pr"]
-        and _keys("checking") == ["repo", "branch", "pr", "ci", "create-pr"]
-        and _keys("passed") == ["repo", "branch", "pr", "check", "create-pr"]
+        _keys("open") == ["repo", "branch", "tokens"]
+        and _keys("working") == ["repo", "branch", "pr", "tokens", "create-pr"]
+        and _keys("checking") == ["repo", "branch", "pr", "ci", "tokens"]
+        and _keys("passed") == ["repo", "branch", "pr", "check", "tokens"]
         and all(len(_keys(ph)) <= 5 for ph in ("open", "working", "checking", "passed"))  # doc's ≤5 cap
     )
     print(f"[{'PASS' if phase_ok else 'FAIL'}] slack_code._build_context_bar/phases open|working|checking|passed")
     if not phase_ok:
         fail += 1
 
-    # Exactly ONE action chip (create-pr), and it's an action (no url); every OTHER
-    # chip is a link (has a url). CI flips failing → the green check gate between
-    # checking and passed. 'open' stays orientation-only (no action chip yet).
+    # Exactly ONE action chip (create-pr) in working, and it's an action (no url);
+    # every OTHER chip except tokens is a link (has a url). CI flips failing → the
+    # green check gate between checking and passed. 'open' stays orientation-only.
     _open = {i["key"]: i for i in _build_context_bar(_cfg_bar, branch="feat/x", phase="open")}
     _checking = {i["key"]: i for i in _build_context_bar(_cfg_bar, branch="feat/x", phase="checking")}
     _passed = {i["key"]: i for i in _build_context_bar(_cfg_bar, branch="feat/x", phase="passed", check_label="durability")}
     def _action_chips(ph):
         return [i for i in _build_context_bar(_cfg_bar, branch="feat/x", phase=ph) if i.get("item_type") == "action"]
     chips_shape_ok = (
-        _action_chips("open") == []                                                      # orientation only
-        and all(len(_action_chips(ph)) == 1 and _action_chips(ph)[0]["key"] == "create-pr"
-                and "url" not in _action_chips(ph)[0]                                     # action chip has NO url
-                for ph in ("working", "checking", "passed"))
+        all(_action_chips(ph) == [] for ph in ("open", "checking", "passed"))            # no room / orientation only
+        and len(_action_chips("working")) == 1 and _action_chips("working")[0]["key"] == "create-pr"
+        and "url" not in _action_chips("working")[0]                                     # action chip has NO url
         and all(i.get("url") for ph in ("open", "working", "checking", "passed")
                 for i in _build_context_bar(_cfg_bar, branch="feat/x", phase=ph)
-                if i.get("item_type") != "action")                                       # every non-action chip is a link
+                if i.get("item_type") != "action" and i["key"] != "tokens")              # every other chip is a link
         and _checking["ci"]["label"] == "CI: failing" and _checking["ci"].get("url")     # CI: failing during check
         and _passed["check"]["label"] == "durability: pass" and _passed["check"].get("url")  # green gate after patch
         and "ci" not in _passed and "check" not in _checking                             # they swap, not stack
     )
     print(f"[{'PASS' if chips_shape_ok else 'FAIL'}] slack_code._build_context_bar/one-action-chip+ci-flips")
     if not chips_shape_ok:
+        fail += 1
+
+    # Token-usage chip: a url-less info chip ("34.3k tokens", terminal icon) whose
+    # count CLIMBS open → working → checking → passed, so the bar reads as a live
+    # session spending tokens. Must survive the sanitizer (info + terminal kept).
+    def _tok(ph):
+        return {i["key"]: i for i in _build_context_bar(_cfg_bar, branch="feat/x", phase=ph)}["tokens"]
+    _tok_counts = [float(_tok(ph)["label"].removesuffix("k tokens")) for ph in ("open", "working", "checking", "passed")]
+    _tok_clean = _sanitize_bar([_tok("passed")])
+    tokens_ok = (
+        all(_tok(ph)["label"].endswith("k tokens") for ph in ("open", "working", "checking", "passed"))
+        and _tok_counts == sorted(_tok_counts) and len(set(_tok_counts)) == 4             # strictly climbs
+        and _tok("passed")["label"] == "34.3k tokens"
+        and _tok_clean == [{"key": "tokens", "label": "34.3k tokens", "icon": "terminal", "item_type": "info"}]
+        and _tok("bogus-phase")["label"] == _tok("working")["label"]                      # unknown → working
+    )
+    print(f"[{'PASS' if tokens_ok else 'FAIL'}] slack_code._build_context_bar/token-chip-climbs -> {_tok_counts}")
+    if not tokens_ok:
         fail += 1
 
     # is_code_channel result cache: is_code_channel runs on the hot follow-up path
@@ -762,7 +786,7 @@ def _run_self_test() -> int:
         ("bare mention, no markers", {"text": "<@U0BOTEXAMPLE>"}, False),
         ("empty event", {}, False),
         # Real asks must NOT be dropped (no echo markers present):
-        ("channel-ref ask", {"text": "<@U0BOTEXAMPLE> summarize <#C0C0K1732N5|billing>"}, False),
+        ("channel-ref ask", {"text": "<@U0BOTEXAMPLE> summarize <#C0EXAMPLE01|billing>"}, False),
         ("PR-link ask, no prose", {"text": "<@U0BOTEXAMPLE> <https://github.com/acme/pr/9|this PR>"}, False),
     ]
     for label, evt, expected in echo_fixtures:
@@ -874,7 +898,7 @@ def _run_self_test() -> int:
              all(isinstance(p, dict) and p.get("name") and p.get("email_stem") for p in _parts)),
             ("participant_beats non-empty", isinstance(_beats, list) and len(_beats) >= 1),
             ("every beat: valid phase, non-empty text, name ∈ PARTICIPANTS",
-             all(isinstance(b, dict) and b.get("phase") in ("arrival", "on_artifacts")
+             all(isinstance(b, dict) and b.get("phase") in ("arrival", "on_artifacts", "on_asset", "on_image")
                  and b.get("text") and b.get("name") in _pnames for b in _beats)),
             ("has an arrival beat (the stall)", any(b.get("phase") == "arrival" for b in _beats)),
             ("beats have no double-asterisk bold",
@@ -1026,11 +1050,145 @@ def _run_self_test() -> int:
             fail += 1
         print(f"[{status}] scenario.website_redesign/{label}")
 
+    # ---- "use this image" + asset-share plumbing (story-independent) ---------
+    # The image/slide edits and the designer's asset review are scenario hooks
+    # (see scenarios/__init__.py); these checks cover the engine side with no
+    # story installed. A private demo that uses them adds its own checks in
+    # qa_local/ (run at the end of the self-test).
+    img_collision_ok = recognize_code_action("hey, use this image") is None
+    if not img_collision_ok:
+        fail += 1
+    print(f"[{'PASS' if img_collision_ok else 'FAIL'}] slack_code.recognize_image_edit/no-code-action-collision")
+    from listeners.events.slack_code import (
+        _call_with_state, event_links, recognize_asset_share, recognize_image_edit,
+        recognize_slide_edit, restore_data_uris, shrink_data_uris,
+    )
+    _img_page = ('<!doctype html><img src="data:image/jpeg;base64,' + "A" * 20_000 + '">'
+                 '<img src="data:image/png;base64,' + "B" * 20_000 + '">')
+    _small, _emb = shrink_data_uris(_img_page)
+    asset_checks = [
+        ("stories without image hooks never match an image edit", not recognize_image_edit("use this image", wr)),
+        ("stories without slide hooks never match a slide edit", not recognize_slide_edit("add the slide", wr)),
+        ("stories without image hooks ignore asset shares",
+         not recognize_asset_share("<https://www.canva.com/d/x|Hero>", wr)),
+        ("event_links reads attachment URLs",
+         "canva.com" in event_links({"text": "", "attachments": [{"from_url": "https://www.canva.com/d/x"}]})),
+        ("event_links never raises on junk", event_links({"attachments": ["x", None, {"from_url": 5}]}) == ""),
+        ("shrink_data_uris keeps images out of prompts/diffs",
+         len(_emb) == 2 and len(_small) < 1_000 and "base64," not in _small),
+        ("shrink/restore round-trips the page", restore_data_uris(_small, _emb) == _img_page),
+        ("shrink tokens are stable (no diff noise)", shrink_data_uris(_img_page)[1].keys() == _emb.keys()),
+        ("_call_with_state passes only accepted state",
+         _call_with_state(lambda: "ok", slide=True) == "ok"
+         and _call_with_state(lambda *, slide=False: slide, slide=True, image=True) is True),
+    ]
+    for label, cond in asset_checks:
+        if not cond:
+            fail += 1
+        print(f"[{'PASS' if cond else 'FAIL'}] slack_code.asset-plumbing/{label}")
+
+    # Async: a story with no on_asset beat posts nothing on an asset share, and a
+    # cast line posts AS the persona when their token exists (else it's spoofed).
+    import asyncio as _aio
+    import logging as _lg
+    from agent import slackcode as _skc
+    from listeners.events import slack_code as _scm
+
+    class _PostRecorder:
+        def __init__(self):
+            self.posts: list[dict] = []
+
+        def __getattr__(self, name):
+            async def _rec(*a, **k):
+                if name == "chat_postMessage":
+                    self.posts.append(k)
+                return {"ok": True, "ts": "1.1"}
+            return _rec
+
+    _ch_plain = "C0PLAINREVIEW"
+    _saved_delay = _scm._ASSET_REVIEW_DELAY_S
+    _saved_pc = _skc._persona_client_for
+    try:
+        _scm._ASSET_REVIEW_DELAY_S = 0
+        _skc.set_channel_scenario(_ch_plain, "website_redesign")  # no on_asset beat
+        _scm._ASSET_REVIEWED.discard(_ch_plain)
+        _rec_plain = _PostRecorder()
+        _aio.run(_scm.run_asset_review(_rec_plain, _lg.getLogger("qa-asset"), _skc.load_slack_code_config(), _ch_plain))
+        _plain_ok = not _rec_plain.posts
+        print(f"[{'PASS' if _plain_ok else 'FAIL'}] slack_code.run_asset_review/no-op-without-on_asset "
+              f"(posts={len(_rec_plain.posts)})")
+        if not _plain_ok:
+            fail += 1
+
+        _persona_rec, _bot_rec = _PostRecorder(), _PostRecorder()
+
+        async def _fake_persona(client, stem):
+            return _persona_rec if stem == "cindy_central" else None
+
+        # Never post with a real persona token from a self-test.
+        _skc._persona_client_for = _fake_persona
+        _aio.run(_skc.post_as_participant(_bot_rec, "C0CAST", name="Cindy Chen", text="Looks good",
+                                          email_stem="cindy_central", user_id="U0CINDYQA"))
+        _aio.run(_skc.post_as_participant(_bot_rec, "C0CAST", name="No Token", text="Spoofed",
+                                          email_stem="no_token", user_id="U0NOTOKENQA"))
+        _as_ok = (len(_persona_rec.posts) == 1 and "username" not in _persona_rec.posts[0]
+                  and _persona_rec.posts[0].get("as_user") is True
+                  and _skc.is_cast_member("U0CINDYQA"))
+        _spoof_ok = (len(_bot_rec.posts) == 1 and _bot_rec.posts[0].get("username") == "No Token"
+                     and not _skc.is_cast_member("U0NOTOKENQA"))
+        for _label, _ok in (("posts-as-persona-with-token-and-marks-cast", _as_ok),
+                            ("spoofs-when-no-token", _spoof_ok),
+                            ("non-cast-user-not-ignored", not _skc.is_cast_member("U0SOMEHUMAN"))):
+            print(f"[{'PASS' if _ok else 'FAIL'}] slackcode.post_as_participant/{_label}")
+            if not _ok:
+                fail += 1
+    finally:
+        _scm._ASSET_REVIEW_DELAY_S = _saved_delay
+        _skc._persona_client_for = _saved_pc
+        _skc._CAST_USER_IDS.discard("U0CINDYQA")
+        _skc.clear_channel_scenario(_ch_plain)
+        _skc.clear_channel_artifact(_ch_plain)
+        _scm._ASSET_REVIEWED.discard(_ch_plain)
+
+    # ---- Code channel origin is ALWAYS the mention, never the thread parent -----
+    # The thread parent is a seeded story message — it must never be re-anchored
+    # as the code channel's origin. If Slack rejects a thread-reply origin,
+    # create_channel makes ONE call and returns the failure (caller falls back).
+    class _CreateFake:
+        def __init__(self, reject_ts, gated=False):
+            self.calls, self.reject_ts, self.gated = [], reject_ts, gated
+
+        async def api_call(self, method, json=None, **_k):
+            self.calls.append(dict(json or {}))
+            if self.gated:
+                return {"ok": False, "error": "feature_disabled"}
+            if (json or {}).get("origin_message_ts") == self.reject_ts:
+                return {"ok": False, "error": "message_not_found"}
+            return {"ok": True, "channel_id": "C0NEWCODE"}
+
+    _fk = _CreateFake(reject_ts="2.2")
+    _res = _aio.run(_skc.create_channel(_fk, name="x", session_id="s", origin_channel_id="C0",
+                                        origin_message_ts="2.2"))
+    _thread_ok = ((not _res.ok) and [c["origin_message_ts"] for c in _fk.calls] == ["2.2"])
+    _fk2 = _CreateFake(reject_ts="none")
+    _res2 = _aio.run(_skc.create_channel(_fk2, name="x", session_id="s", origin_channel_id="C0",
+                                         origin_message_ts="3.3"))
+    _top_ok = _res2.ok and len(_fk2.calls) == 1
+    _fk3 = _CreateFake(reject_ts="2.2", gated=True)
+    _res3 = _aio.run(_skc.create_channel(_fk3, name="x", session_id="s", origin_channel_id="C0",
+                                         origin_message_ts="2.2"))
+    _gated_ok = (not _res3.ok) and _res3.feature_gated and len(_fk3.calls) == 1
+    for _label, _ok in (("thread-reply-never-anchors-to-parent", _thread_ok),
+                        ("top-level-single-call", _top_ok),
+                        ("beta-off-no-retry", _gated_ok)):
+        print(f"[{'PASS' if _ok else 'FAIL'}] slackcode.create_channel/{_label}")
+        if not _ok:
+            fail += 1
+
     # ---- Every scenario defines the _THINKING "open" key (session-start line) --
     # The DEFAULT story was missing it (drift); assert all seeded scenarios have a
     # non-generic "open" line so no scenario silently degrades on session start.
-    for slug in ("website_redesign", "billing_webhook", "checkout_incident",
-                 "flaky_test", "sql_migration"):
+    for slug in sorted(s for s in _KNOWN if is_seeded(load_scenario(s))):
         sc = load_scenario(slug)
         line = sc.thinking_line("open") if hasattr(sc, "thinking_line") else ""
         cond = bool(line) and line != "Working on it…"
@@ -1631,6 +1789,70 @@ def _run_self_test() -> int:
     if not default_guard_ok:
         fail += 1
 
+    # ---- Self-registering scenarios (discovery + hide) ---------------------------
+    # Every non-underscore module in scenarios/ and scenarios_tag/ registers itself;
+    # one that fails to import is skipped and recorded (fail here, not at bot boot).
+    # Hiding a demo in ./demo takes its story out of routing but leaves it loadable,
+    # so a code channel already open for it keeps rendering.
+    import json as _json
+    import scenarios as _sc_pkg
+    import scenarios_tag as _tag_pkg
+
+    _routed = [s for s, _ in _sc_pkg.route_table()]
+    discovery_checks = [
+        ("no scenario failed to import", not _sc_pkg.DISCOVERY_ERRORS),
+        ("no Tag scenario failed to import", not _tag_pkg.DISCOVERY_ERRORS),
+        ("_template is not registered",
+         "_template" not in _sc_pkg._KNOWN and "_template" not in _tag_pkg._KNOWN),
+        ("freeform is registered but not keyword-routed",
+         "freeform" in _sc_pkg._KNOWN and "freeform" not in _routed),
+        ("every seeded story declares ROUTE_KEYWORDS",
+         all(s in _routed for s in _sc_pkg._KNOWN if is_seeded(load_scenario(s)))),
+    ]
+    _saved_state_path = _demo_state.STATE_PATH
+    _demo_state.STATE_PATH = Path(_tempfile.mkdtemp()) / "state.json"
+    _demo_state.STATE_PATH.write_text(_json.dumps({
+        "hidden_scenarios": ["billing_webhook"],
+        "hidden_tag_scenarios": ["scheduled_exports"],
+    }))
+    try:
+        discovery_checks += [
+            ("hidden story is skipped by the router",
+             route_scenario("refactor the billing webhook to a durable queue") == "freeform"),
+            ("hidden story still loads (open channels keep rendering)",
+             load_scenario("billing_webhook").SLUG == "billing_webhook"),
+            ("other stories still route while one is hidden",
+             route_scenario("implement the homepage redesign") == "website_redesign"),
+            ("hidden Tag story is skipped by the Tag router",
+             route_tag_scenario("set up scheduled exports of the audit log") == ""),
+        ]
+    finally:
+        _demo_state.STATE_PATH = _saved_state_path
+    for label, cond in discovery_checks:
+        print(f"[{'PASS' if cond else 'FAIL'}] scenarios.discovery/{label}")
+        if not cond:
+            fail += 1
+
+    # ---- Demo manifests (demos/*.toml) --------------------------------------------
+    # Each manifest parses, the files it owns exist, and its trigger phrase opens its
+    # own story. A scenario no manifest lists still runs, but ./demo can't show it —
+    # a warning, not a failure.
+    from demokit import health as _demo_health
+    from demokit.manifest import load_demos as _load_demos
+
+    _demos = _load_demos()
+    _repo = _demo_health.repo_checks(_demos)
+    if not _repo:
+        print("[PASS] demos/every scenario loads and belongs to one demo")
+    for _c in _repo:
+        print(f"[{'WARN' if _c.warn else 'FAIL'}] demos/{_c.label} — {_c.detail}")
+        fail += not _c.warn
+    for _d in _demos:
+        for _c in _demo_health.demo_checks(_d, _demos):
+            _tag = "PASS" if _c.ok else ("WARN" if _c.warn else "FAIL")
+            print(f"[{_tag}] demos.{_d.id}/{_c.label}{'' if _c.ok or not _c.detail else ' — ' + _c.detail}")
+            fail += not _c.ok and not _c.warn
+
     # ---- Per-channel scenario registry (locks a channel to its story) -----------
     from agent.slackcode import (
         clear_channel_scenario,
@@ -2145,10 +2367,23 @@ def _run_self_test() -> int:
     if not beat_order_ok:
         fail += 1
 
+    # ---- Private checks (qa_local/, git-ignored) --------------------------------
+    # Checks for demos that stay on this machine (a customer's story) live beside
+    # them in qa_local/<name>.py, each with run() -> int (its failure count).
+    import importlib as _il
+    for _mod_path in sorted((_HERE / "qa_local").glob("[!_]*.py")):
+        try:
+            _local = _il.import_module(f"qa_local.{_mod_path.stem}")
+            _n = _local.run()
+        except Exception as e:  # noqa: BLE001 — a broken local check is a failure, not a crash
+            print(f"[FAIL] qa_local/{_mod_path.name} raised {type(e).__name__}: {e}")
+            _n = 1
+        fail += int(_n or 0)
+
     return 0 if fail == 0 else 1
 
 
-async def _run_probe(channel_id: str) -> int:
+async def _run_probe(channel_id: str, *, include_archive: bool = False) -> int:
     """Live probe of the confidential-beta setView/setProperties shapes whose
     per-method contract Slack does not publish. Run from YOUR OWN Terminal against
     a real code channel the bot is in (host OAuth vars leak inside a nested Claude
@@ -2193,7 +2428,7 @@ async def _run_probe(channel_id: str) -> int:
     from listeners.events.slack_code import run_view_probe
 
     _log = _logging.getLogger("qa-probe")
-    lines = await run_view_probe(client, _log, channel_id)
+    lines = await run_view_probe(client, _log, channel_id, include_archive=include_archive)
     for ln in lines:
         print(ln)
     if any("is_code_channel=False" in ln for ln in lines):
@@ -2201,7 +2436,14 @@ async def _run_probe(channel_id: str) -> int:
         return 1
     print("\nprobe: if the action item published OK, CLICK 'Probe: click me' in the channel "
           "and watch the bot's stderr for the inbound event (code_channel_action or a slash-style "
-          "POST). Record the payload shape, then wire the handler.")
+          "POST). Record the payload shape, then wire the handler.\n"
+          "probe: type /probe-cmd in the channel and watch stderr for the inbound request to "
+          "confirm setCommands delivery.\n"
+          "probe: if you added a comment to \"Probe Canvas\" before this run, check by eye that "
+          "it's still anchored to the right line after setCanvasContent." +
+          ("\nprobe: --archive was passed — this channel is now archived." if include_archive else
+           "\nprobe: pass --archive once you're done with this channel to also confirm archive("
+           "summary_message_ts=...)."))
     return 0
 
 
@@ -2250,8 +2492,10 @@ def main() -> int:
     mode.add_argument("--self-test", action="store_true", help="Run offline fixtures")
     mode.add_argument("--vet-questions", action="store_true", help="Live-vet demo questions")
     mode.add_argument("--probe", action="store_true",
-                      help="Live-probe confidential-beta setView/setProperties shapes "
-                           "(canvas + interactive context-bar item). Needs --channel and SLACK_BOT_TOKEN.")
+                      help="Live-probe confidential-beta setView/setProperties/setCommands/status "
+                           "shapes (canvas, interactive context-bar item, per-channel slash "
+                           "commands, a processing/suspended/active status cycle). Needs --channel "
+                           "and SLACK_BOT_TOKEN.")
     parser.add_argument(
         "--questions",
         help="Override file: pipe-delimited list of questions",
@@ -2261,6 +2505,13 @@ def main() -> int:
         "--channel",
         help="Target code-channel id for --probe (a live code channel the bot is in)",
         default=None,
+    )
+    parser.add_argument(
+        "--archive",
+        action="store_true",
+        help="With --probe: also archive the channel at the end, to confirm "
+             "archive(summary_message_ts=...). Terminal — the channel is gone after. "
+             "Off by default.",
     )
     args = parser.parse_args()
 
@@ -2278,7 +2529,7 @@ def main() -> int:
         if not args.channel:
             print("--probe requires --channel C0CODECHANNEL", file=sys.stderr)
             return 1
-        return asyncio.run(_run_probe(args.channel))
+        return asyncio.run(_run_probe(args.channel, include_archive=args.archive))
 
     return 1
 

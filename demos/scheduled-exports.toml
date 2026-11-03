@@ -1,0 +1,7 @@
+name     = "Scheduled exports (Tag)"
+customer = "Built-in"
+summary  = "In-thread checklist: Claude builds scheduled exports, a teammate corrects the design mid-build, and Claude replans. Needs In-thread tasks turned on in Bot settings."
+surfaces      = ["claude_tag"]
+tag_scenarios = ["scheduled_exports"]
+trigger       = "set up scheduled exports of the audit log"
+example       = true

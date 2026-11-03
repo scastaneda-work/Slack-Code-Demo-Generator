@@ -1,0 +1,7 @@
+name     = "Safe SQL migration"
+customer = "Acme"
+summary  = "Architect story: add last_login_at end to end (migration, model, API, test) with the operational safety right."
+surfaces  = ["slack_code"]
+scenarios = ["sql_migration"]
+trigger   = "add a last_login_at column to users, backfill it, and expose it on /me"
+example   = true

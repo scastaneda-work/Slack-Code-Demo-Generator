@@ -36,6 +36,17 @@ CHECK_LABEL = "contrast"
 # conversion dashboard. (No recap tab — the recap posts as a message.)
 ARTIFACTS = {"diff", "preview", "dashboard"}
 
+# --- Routing ------------------------------------------------------------------
+# The @-mention phrases that open THIS story's code channel. Lower
+# ROUTE_PRIORITY is matched first (see scenarios.route_scenario).
+# Last: generic web phrases ("homepage", "the site", "redesign") that every more
+# specific story (a lower ROUTE_PRIORITY) must win over.
+ROUTE_PRIORITY = 90
+ROUTE_KEYWORDS = (
+    "homepage", "home page", "landing page", "redesign", "hero section",
+    "marketing site", "welloguard", "the site", "web page redesign",
+)
+
 # The artifact filename shown in the Code tab's diff banner. This scenario SEEDS
 # a live-editable page: the session opens with preview_html(False) as turn-0
 # content under this name, and follow-up edits ("make the hero blue") re-diff the
@@ -417,7 +428,7 @@ def participant_beats() -> list[dict]:
     return [
         {"name": "Cindy", "phase": "arrival",
          "text": (":art: This is the single benefit-led hero — headline plus one CTA. "
-                  "Let's see what Claude ships.")},
+                  "Let's see what {agent} ships.")},
         {"name": "Ralph", "phase": "on_artifacts",
          "text": ("Looks sharp. Only thing I'll watch is the CTA contrast on the amber band — "
                   "it has to pass before this goes live.")},

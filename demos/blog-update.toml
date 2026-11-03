@@ -1,0 +1,7 @@
+name     = "Blog update (Tag)"
+customer = "Built-in"
+summary  = "In-thread checklist for a doc task (no PR): Claude adds a line to the beta launch blog in Drive. Needs In-thread tasks turned on in Bot settings."
+surfaces      = ["claude_tag"]
+tag_scenarios = ["blog_update"]
+trigger       = "update the blog, add a line under What's in the beta"
+example       = true

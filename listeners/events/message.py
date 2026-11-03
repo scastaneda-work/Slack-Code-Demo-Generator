@@ -15,10 +15,17 @@ from listeners.events.finalize import finalize_response
 from listeners.events.slack_code import (
     _scenario_for,
     recognize_code_action,
+    event_links,
+    recognize_asset_share,
     recognize_faq_edit,
+    recognize_image_edit,
+    recognize_slide_edit,
     run_artifact_turn,
+    run_asset_review,
     run_code_action,
     run_faq_edit,
+    run_image_edit,
+    run_slide_edit,
 )
 from listeners.events.slack_tag import run_tag_followup
 from agent import tagsession
@@ -47,6 +54,10 @@ async def handle_message(
     if event.get("subtype"):
         return
     if await slackcode.is_own_bot_event(client, event):
+        return
+    # A scripted persona's line (posted with their own token) arrives like any
+    # human message — never answer it.
+    if slackcode.is_cast_member(event.get("user")):
         return
 
     # Capture the workspace team_id (a `T...`) for Grid team-scoped calls (see
@@ -112,6 +123,7 @@ async def handle_message(
                 channel_id=context.channel_id,
                 text=text,
                 user_id=context.user_id,
+                links=event_links(event),
             )
         return
 
@@ -206,6 +218,7 @@ async def _reply_in_code_channel_followup(
     channel_id: str,
     text: str,
     user_id: str | None,
+    links: str = "",
 ) -> None:
     """Answer a NON-mention follow-up message in a code channel, per the Slack
     Code spec ("respond even when you aren't @-mentioned"). Runs the agent and
@@ -229,6 +242,25 @@ async def _reply_in_code_channel_followup(
         if recognize_faq_edit(text):
             logger.warning("code-channel FAQ edit follow-up: channel=%s", channel_id)
             await run_faq_edit(client, logger, _SLACK_CODE_CFG, channel_id)
+            return
+        # The pre-baked "use this image" edit (scenarios with an image_diff) —
+        # same instant short-circuit as the FAQ edit.
+        if recognize_image_edit(text, scenario):
+            logger.warning("code-channel image edit follow-up: channel=%s", channel_id)
+            await run_image_edit(client, logger, _SLACK_CODE_CFG, channel_id)
+            return
+        # The pre-baked "add the slide" edit (scenarios with a slide_diff).
+        if recognize_slide_edit(text, scenario):
+            logger.warning("code-channel slide edit follow-up: channel=%s", channel_id)
+            await run_slide_edit(client, logger, _SLACK_CODE_CFG, channel_id)
+            return
+        # A bare asset-link share (the Canva design is a story prop — the image is
+        # hardcoded) is never handed to the live agent to "use": the designer
+        # reviews it if the story scripts that, else it's ignored. `links` adds
+        # attachment URLs (a design shared from Slackbot or the Canva app).
+        if recognize_asset_share(f"{text} {links}", scenario):
+            logger.warning("code-channel asset share (follow-up): channel=%s", channel_id)
+            await run_asset_review(client, logger, _SLACK_CODE_CFG, channel_id)
             return
         action = recognize_code_action(text)
         if action:

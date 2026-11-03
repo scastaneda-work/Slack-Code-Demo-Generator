@@ -29,6 +29,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 from agent import AgentDeps
 from agent.agent import run_agent_offloop  # code-channel turns run off the Socket Mode loop
 from agent.audit import audit_log
+from agent.persona import agent_name
 from agent.identity import resolve_user_name
 from agent import slackcode
 from agent.taskplan import extract_plan, validate_plan
@@ -91,6 +92,13 @@ def _pr_label(pr_url: str) -> str:
     return f"PR #{m.group(1)} (draft)" if m else "PR (draft)"
 
 
+# The token-usage chip's count per phase — fake-but-plausible session spend that
+# CLIMBS as the work progresses (the reference demo's bar reads "34.3k tokens").
+# Fixed per phase so a rehearsal and the live run show the same numbers. An
+# unknown phase reads as "working", matching _build_context_bar's fallback.
+_TOKENS_BY_PHASE = {"open": "2.4k", "working": "18.6k", "checking": "27.1k", "passed": "34.3k"}
+
+
 def _build_context_bar(
     cfg: slackcode.SlackCodeConfig, *, branch: str, phase: str = "open",
     check_label: str = "durability", scenario=None,
@@ -105,9 +113,14 @@ def _build_context_bar(
     Most chips are LINK chips (info + a url) pointing at the ACTIVE SCENARIO's own
     fake-but-plausible repo/PR/CI pages (see _repo_facts), so a click reads as a
     real shortcut and the labels match the story (acme/checkout-service #914, …).
+    The one exception is the token-usage chip ("34.3k tokens", see
+    _TOKENS_BY_PHASE): a plain info chip with NO url — there's no plausible page
+    for it to open. Slack renders a url-less info chip as a label (verified live
+    2026-10-12).
 
-    We ALSO publish one item_type:"action" chip ("Create PR") from the "working"
-    phase on. The properties doc (beta) says an action chip's click delivers a
+    We ALSO publish one item_type:"action" chip ("Create PR") in the "working"
+    phase — the only phase with room for it once the token chip is in (checking/
+    passed are already at the 5-chip cap). The properties doc (beta) says an action chip's click delivers a
     code_channel_action to the app, and we have a handler wired for it
     (listeners/events/code_channel_action.py, mapped: create-pr → the canned PR
     post). BUT a live test (2026-09-17, Socket Mode) confirmed the click currently
@@ -123,10 +136,10 @@ def _build_context_bar(
     and its presence is intentional pending the beta.
 
     Phases (chip set grows/settles with the beat; ≤5 items, the doc's hard cap):
-      • "open"     — agent spinning up: repo · branch (orientation only)
-      • "working"  — a diff/preview is up: repo · branch · PR (draft) · [Create PR]
-      • "checking" — a check running/failed: repo · branch · PR · CI: failing · [Create PR]
-      • "passed"   — patch applied, green:   repo · branch · PR · check: pass · [Create PR]
+      • "open"     — agent spinning up: repo · branch · tokens (orientation only)
+      • "working"  — a diff/preview is up: repo · branch · PR (draft) · tokens · [Create PR]
+      • "checking" — a check running/failed: repo · branch · PR · CI: failing · tokens
+      • "passed"   — patch applied, green:   repo · branch · PR · check: pass · tokens
     Unknown phase falls back to "working"."""
     repo, repo_url, pr_url = _repo_facts(cfg, scenario)
     items = [
@@ -134,8 +147,10 @@ def _build_context_bar(
         {"key": "branch", "label": branch, "icon": "branch",
          "url": f"{repo_url}/tree/{branch}"},
     ]
+    tokens = {"key": "tokens", "icon": "terminal", "item_type": "info",
+              "label": f"{_TOKENS_BY_PHASE.get(phase, _TOKENS_BY_PHASE['working'])} tokens"}
     if phase == "open":
-        return items
+        return [*items, tokens]
     # From "working" on, there's a reviewable PR.
     items.append({"key": "pr", "label": _pr_label(pr_url), "icon": "hierarchy", "url": pr_url})
     if phase == "checking":
@@ -146,13 +161,16 @@ def _build_context_bar(
         # After the patch: the check gate is green. 'lock' reads as a passed gate.
         items.append({"key": "check", "label": f"{check_label}: pass", "icon": "lock",
                       "url": f"{repo_url}/actions"})
+    items.append(tokens)
     # An interactive chip (key="create-pr"). Per the beta doc its click should
     # deliver a code_channel_action that our handler turns into the canned draft-PR
     # message — but as of 2026-09-17 the click fires nothing (see the docstring);
-    # kept as a forward bet for when the beta delivers it. Last, within the ≤5 cap
-    # (working=4, checking/passed=5). NO url — a url makes it a link chip instead.
-    items.append({"key": "create-pr", "label": "Create PR", "icon": "hierarchy",
-                  "item_type": "action"})
+    # kept as a forward bet for when the beta delivers it. Last, and only while
+    # under the ≤5 cap (working=5; checking/passed are full, so it yields to the
+    # token chip). NO url — a url makes it a link chip instead.
+    if len(items) < 5:
+        items.append({"key": "create-pr", "label": "Create PR", "icon": "hierarchy",
+                      "item_type": "action"})
     return items
 
 
@@ -231,20 +249,41 @@ async def _fetch_origin_context(
 # handlers, so the fail→patch→pass loop updates the exact same tabs.
 
 
-def _scenario_preview_html(scenario, *, patched: bool, faq: bool = False) -> str:
-    """Call ``scenario.preview_html`` with the FAQ variant when requested, tolerating
-    scenarios whose signature predates the keyword-only ``faq`` param (they just get
-    the normal page). Keeps the FAQ opt-in additive and scenario-agnostic."""
-    if faq:
-        try:
-            return scenario.preview_html(patched, faq=True)
-        except TypeError:
-            pass  # scenario has no `faq` param — fall back to the normal page
-    return scenario.preview_html(patched)
+def _call_with_state(fn, *args, **state):
+    """Call a scenario function with only the page-state keywords it accepts, so
+    older scenarios keep working as the page grows new states (image, slide, …)."""
+    import inspect
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return fn(*args)
+    if any(p.kind is p.VAR_KEYWORD for p in params.values()):
+        return fn(*args, **state)
+    return fn(*args, **{k: v for k, v in state.items() if k in params})
+
+
+def _page_state(channel_id: str) -> dict[str, bool]:
+    """Which pre-baked edits are live on this channel's page (image swapped,
+    extra slide added) — every publish renders from this, in any beat order."""
+    return {
+        "image": slackcode.is_channel_image_swapped(channel_id),
+        "slide": slackcode.has_channel_flag(channel_id, "slide"),
+    }
+
+
+def _scenario_preview_html(
+    scenario, *, patched: bool, faq: bool = False, image: bool = False, slide: bool = False,
+) -> str:
+    """Call ``scenario.preview_html`` with the requested variants (FAQ, swapped
+    image, extra slide), passing only the ones its signature accepts — a scenario
+    without a variant just gets the normal page. Keeps every opt-in additive."""
+    state = {k: True for k, on in (("faq", faq), ("image", image), ("slide", slide)) if on}
+    return _call_with_state(scenario.preview_html, patched, **state)
 
 
 async def _publish_preview(
     client: AsyncWebClient, channel_id: str, scenario, *, patched: bool, faq: bool = False,
+    image: bool = False, slide: bool = False,
 ) -> slackcode.SlackCodeResult:
     """Publish/refresh the Preview tab (the 'what it looks like' HTML view).
 
@@ -257,12 +296,21 @@ async def _publish_preview(
     visible.
 
     ``faq`` (website_redesign only) adds the pre-baked expandable FAQ section —
-    passed through to ``preview_html``; scenarios without an FAQ ignore it."""
+    passed through to ``preview_html``; scenarios without an FAQ ignore it.
+    ``image`` (scenarios with an image edit) renders the swapped hero image."""
     import logging as _logging
     log = _logging.getLogger("claude-ai-bot")
 
-    full = _scenario_preview_html(scenario, patched=patched, faq=faq)
+    full = _scenario_preview_html(scenario, patched=patched, faq=faq, image=image, slide=slide)
     attempts: list[tuple[str, str]] = [("full", full)]
+    # An embedded image makes the page much bigger than any proven shape, so a
+    # scenario can offer smaller-image variants to try before the generic ladder.
+    fallbacks = getattr(scenario, "preview_fallbacks", None)
+    if (image or slide) and callable(fallbacks):
+        try:
+            attempts += list(_call_with_state(fallbacks, patched, image=image, slide=slide))
+        except Exception:  # noqa: BLE001 — a bad fallback list must never block the tab
+            log.warning("preview_fallbacks() raised — skipping", exc_info=True)
     # Fallback 1: strip the doctype/html/head wrapper — send just the body's
     # inner markup + an inline <style> (some HTML sanitizers reject full docs).
     if "<body>" in full and "</body>" in full:
@@ -275,8 +323,8 @@ async def _publish_preview(
     attempts.append((
         "minimal",
         "<div style=\"font-family:sans-serif;padding:24px\">"
-        "<h1 style=\"color:#14203A\">WelloGuard</h1>"
-        "<p>Homepage redesign preview.</p></div>",
+        "<h1 style=\"color:#14203A\">Preview</h1>"
+        "<p>The updated page is in the Code tab.</p></div>",
     ))
 
     result = slackcode.SlackCodeResult(ok=False, error="no attempt made")
@@ -337,16 +385,23 @@ async def _publish_dashboard(client: AsyncWebClient, channel_id: str, scenario) 
 
 async def _publish_diff(
     client: AsyncWebClient, channel_id: str, scenario, *, branch: str, patched: bool, faq: bool = False,
+    image: bool = False, slide: bool = False, page: dict | None = None,
 ) -> slackcode.SlackCodeResult:
     """Publish/refresh the Code tab (diff view). Same base/head each time so a later
     diff upserts in place instead of stacking a second diff tab.
 
     ``faq`` (website_redesign only) publishes the pre-baked FAQ-accordion diff
-    instead of base/patch — the marketer's instant edit."""
-    if faq and hasattr(scenario, "faq_diff"):
+    instead of base/patch — the marketer's instant edit. ``image`` publishes the
+    scenario's pre-baked image-swap diff (``image_diff``) the same way."""
+    if image and hasattr(scenario, "image_diff"):
+        diff = scenario.image_diff(patched)
+    elif slide and hasattr(scenario, "slide_diff"):
+        diff = scenario.slide_diff(patched)
+    elif faq and hasattr(scenario, "faq_diff"):
         diff = scenario.faq_diff()
     else:
-        diff = scenario.patch_diff() if patched else scenario.base_diff()
+        # The patch covers whatever is on the page now (e.g. an added slide).
+        diff = _call_with_state(scenario.patch_diff, **(page or {})) if patched else scenario.base_diff()
     return await slackcode.set_view(
         client, channel_id,
         view_type="diff", content=diff, base_branch="main", head_branch=branch,
@@ -531,18 +586,24 @@ async def _post_participant_beats(
         if slackcode.is_session_stopped(channel_id):
             return
         name = beat.get("name")
-        text = beat.get("text")
+        text = (beat.get("text") or "").replace("{agent}", agent_name())
         if not name or not text:
             continue
         # Resolve the persona's real avatar so the chime-in shows their photo, not
         # the bot's. Best-effort — falls back to a neutral icon inside post_as_participant.
         icon_url = None
+        user_id = None
         stem = stem_by_name.get(name)
         if stem:
             info = await slackcode.resolve_participant(client, stem)
             if info:
                 icon_url = info.get("icon_url")
-        r = await slackcode.post_as_participant(client, channel_id, name=name, text=text, icon_url=icon_url)
+                user_id = info.get("user_id")
+        # Posts AS the persona when tokens.json has their token, else spoofs.
+        r = await slackcode.post_as_participant(
+            client, channel_id, name=name, text=text, icon_url=icon_url,
+            email_stem=stem, user_id=user_id,
+        )
         # One light Claude reaction: acknowledge the FIRST arrival chime-in with :eyes:.
         if phase == "arrival" and not reacted and getattr(r, "ok", False):
             ts = (getattr(r, "data", None) or {}).get("ts")
@@ -561,7 +622,10 @@ async def run_durability_check(
         await _no_scripted_action(client, channel_id)
         return
     passed = slackcode.is_channel_patched(channel_id)
-    report = scenario.check_pass_report() if passed else scenario.check_fail_report()
+    state = _page_state(channel_id)
+    report = (_call_with_state(scenario.check_pass_report, **state) if passed
+              else _call_with_state(scenario.check_fail_report, **state))
+    slackcode.set_channel_flag(channel_id, "checked")
 
     # Update the context bar to track the check state as part of the beat: a FAIL
     # flips CI to "failing" (the "caught before customers" moment); a PASS (re-check
@@ -581,6 +645,7 @@ async def run_durability_check(
         client=client, logger=logger, channel_id=channel_id, scenario=scenario,
         action="check", work=_update_bar_for_check, verdict_markdown=report,
     )
+    await _refresh_plan(client, logger, channel_id, scenario)
     await audit_log(
         client,
         f":mag: Claude AI Slack Code check ({scenario.CHECK_LABEL}) in <#{channel_id}> → "
@@ -600,6 +665,10 @@ async def run_patch(
         return
     slackcode.mark_channel_patched(channel_id)
     branch = _branch_for(cfg, await _channel_name(client, channel_id), scenario)
+    # Keep prior pre-baked edits (swapped image, added slide) — the patch fixes the
+    # copy, not the art, and covers every slide that's on the page.
+    state = _page_state(channel_id)
+    image = state["image"]
 
     artifacts = getattr(scenario, "ARTIFACTS", {"diff", "preview", "dashboard"})
     await slackcode.set_session_status(client, channel_id, "processing")
@@ -611,9 +680,10 @@ async def run_patch(
         # setView calls race on the channel's view array), then post the verdict —
         # all bracketed by the Thinking pulse so the beat reads "Thinking → fixed".
         async def _do_patch_work() -> None:
-            await _publish_diff(client, channel_id, scenario, branch=branch, patched=True)
+            await _publish_diff(client, channel_id, scenario, branch=branch, patched=True, page=state)
             if "preview" in artifacts:
-                await _publish_preview(client, channel_id, scenario, patched=True)
+                await _publish_preview(client, channel_id, scenario, patched=True, image=image,
+                                       slide=state["slide"])
                 # Keep the live-artifact store in sync with the scripted patch, so a
                 # later freeform edit ("now make the hero blue") builds on the PATCHED
                 # page rather than reverting to the pre-patch seed.
@@ -621,7 +691,8 @@ async def run_patch(
                     if hasattr(scenario, "seed_filename"):
                         slackcode.set_channel_artifact(
                             channel_id, filename=scenario.seed_filename(),
-                            html=scenario.preview_html(True),
+                            html=_scenario_preview_html(scenario, patched=True, image=image,
+                                                        slide=state["slide"]),
                         )
                 except Exception:  # noqa: BLE001 — store sync is best-effort
                     logger.warning("patch: artifact store sync failed", exc_info=True)
@@ -637,7 +708,7 @@ async def run_patch(
         verdict = (
             f":hammer_and_wrench: Applied the patch and re-ran the check — {tabs} "
             "now show the fixed version.\n\n"
-            + scenario.check_pass_report()
+            + _call_with_state(scenario.check_pass_report, **state)
         )
         await run_scripted_beat(
             client=client, logger=logger, channel_id=channel_id, scenario=scenario,
@@ -646,6 +717,7 @@ async def run_patch(
     finally:
         if not slackcode.is_session_stopped(channel_id):
             await slackcode.set_session_status(client, channel_id, "active")
+    await _refresh_plan(client, logger, channel_id, scenario)
     await audit_log(
         client,
         f":hammer_and_wrench: Claude AI Slack Code patch applied in <#{channel_id}> — "
@@ -714,6 +786,199 @@ async def run_faq_edit(
     )
 
 
+async def run_image_edit(
+    client: AsyncWebClient, logger: Logger, cfg: slackcode.SlackCodeConfig, channel_id: str,
+) -> None:
+    """Serve the pre-baked "use this image" edit INSTANTLY: the user hands over a
+    new hero image (simulated — the image is hardcoded in the scenario), so we
+    republish the Code diff + Preview with it swapped in — no agent turn — inside a
+    short Thinking pulse.
+
+    Only for scenarios that define ``image_diff``; a friendly
+    no-op elsewhere. COMPOSES with the patch in either order: we pass the channel's
+    real ``patched`` flag so the price fix isn't reverted, and record the swap so a
+    later /patch keeps the new image. The live-artifact store is synced so a later
+    freeform edit builds on the swapped page."""
+    scenario = _scenario_for(channel_id, cfg)
+    if not is_seeded(scenario) or not hasattr(scenario, "image_diff"):
+        await _no_scripted_action(client, channel_id)
+        return
+    branch = _branch_for(cfg, await _channel_name(client, channel_id), scenario)
+    patched = slackcode.is_channel_patched(channel_id)
+    slide = slackcode.has_channel_flag(channel_id, "slide")
+    first_swap = not slackcode.is_channel_image_swapped(channel_id)
+    slackcode.mark_channel_image_swapped(channel_id)
+
+    await slackcode.set_session_status(client, channel_id, "processing")
+    try:
+        # Refresh Code + Preview SEQUENTIALLY (concurrent setView calls race on the
+        # channel's single view array), bracketed by the Thinking pulse.
+        async def _do_image_work() -> None:
+            await _publish_diff(client, channel_id, scenario, branch=branch, patched=patched, image=True)
+            await _publish_preview(client, channel_id, scenario, patched=patched, image=True, slide=slide)
+            try:
+                if hasattr(scenario, "seed_filename"):
+                    slackcode.set_channel_artifact(
+                        channel_id, filename=scenario.seed_filename(),
+                        html=_scenario_preview_html(scenario, patched=patched, image=True, slide=slide),
+                    )
+            except Exception:  # noqa: BLE001 — store sync is best-effort
+                logger.warning("image edit: artifact store sync failed", exc_info=True)
+
+        report = getattr(scenario, "image_edit_report", None)
+        verdict = (
+            report(patched) if callable(report) else
+            ":frame_with_picture: Swapped in the new image. The *Code* diff and the *Preview* now show it."
+        )
+        await run_scripted_beat(
+            client=client, logger=logger, channel_id=channel_id, scenario=scenario,
+            action="image", work=_do_image_work, verdict_markdown=verdict,
+        )
+    finally:
+        if not slackcode.is_session_stopped(channel_id):
+            await slackcode.set_session_status(client, channel_id, "active")
+    # The first swap cues the next beat (e.g. a teammate suggesting the carousel).
+    if first_swap and not slackcode.is_session_stopped(channel_id):
+        await _post_participant_beats(client, logger, channel_id, scenario, "on_image")
+    await _refresh_plan(client, logger, channel_id, scenario)
+    await audit_log(
+        client,
+        f":frame_with_picture: Claude AI Slack Code image edit served in <#{channel_id}> "
+        "(pre-baked, no agent turn).",
+    )
+
+
+async def run_slide_edit(
+    client: AsyncWebClient, logger: Logger, cfg: slackcode.SlackCodeConfig, channel_id: str,
+) -> None:
+    """Serve the pre-baked "add the slide" edit INSTANTLY: the hero becomes a
+    carousel with the scenario's extra slide (copy + hardcoded artwork), no agent
+    turn, inside a short Thinking pulse. Only for scenarios that define
+    ``slide_diff``. Composes with the image swap and the patch in any order (the
+    new slide arrives already-fixed if the patch has run)."""
+    scenario = _scenario_for(channel_id, cfg)
+    if not is_seeded(scenario) or not hasattr(scenario, "slide_diff"):
+        await _no_scripted_action(client, channel_id)
+        return
+    branch = _branch_for(cfg, await _channel_name(client, channel_id), scenario)
+    patched = slackcode.is_channel_patched(channel_id)
+    image = slackcode.is_channel_image_swapped(channel_id)
+    slackcode.set_channel_flag(channel_id, "slide")
+
+    await slackcode.set_session_status(client, channel_id, "processing")
+    try:
+        async def _do_slide_work() -> None:
+            await _publish_diff(client, channel_id, scenario, branch=branch, patched=patched, slide=True)
+            await _publish_preview(client, channel_id, scenario, patched=patched, image=image, slide=True)
+            try:
+                if hasattr(scenario, "seed_filename"):
+                    slackcode.set_channel_artifact(
+                        channel_id, filename=scenario.seed_filename(),
+                        html=_scenario_preview_html(scenario, patched=patched, image=image, slide=True),
+                    )
+            except Exception:  # noqa: BLE001 — store sync is best-effort
+                logger.warning("slide edit: artifact store sync failed", exc_info=True)
+
+        report = getattr(scenario, "slide_edit_report", None)
+        verdict = (
+            report(patched) if callable(report) else
+            ":sparkles: Added the new slide. The *Code* diff and the *Preview* now show it."
+        )
+        await run_scripted_beat(
+            client=client, logger=logger, channel_id=channel_id, scenario=scenario,
+            action="slide", work=_do_slide_work, verdict_markdown=verdict,
+        )
+    finally:
+        if not slackcode.is_session_stopped(channel_id):
+            await slackcode.set_session_status(client, channel_id, "active")
+    await _refresh_plan(client, logger, channel_id, scenario)
+    await audit_log(
+        client,
+        f":sparkles: Claude AI Slack Code slide edit served in <#{channel_id}> (pre-baked, no agent turn).",
+    )
+
+
+# --- The living Plan canvas ------------------------------------------------------
+def _plan_state(channel_id: str) -> dict[str, bool]:
+    """Everything the Plan ticks off: page edits + check / patch / recap."""
+    return {
+        **_page_state(channel_id),
+        "checked": slackcode.has_channel_flag(channel_id, "checked"),
+        "patched": slackcode.is_channel_patched(channel_id),
+        "recap": slackcode.has_channel_flag(channel_id, "recap"),
+    }
+
+
+async def _publish_plan(client: AsyncWebClient, logger: Logger, channel_id: str, scenario) -> None:
+    """Publish the scenario's Plan canvas tab (what Claude intends to do, from the
+    origin thread) when the session opens. Best-effort; no-op without plan_canvas."""
+    fn = getattr(scenario, "plan_canvas", None)
+    if not callable(fn):
+        return
+    try:
+        r = await slackcode.publish_canvas_view(
+            client, channel_id, title="Plan", markdown=_call_with_state(fn, **_plan_state(channel_id)),
+            view_key="plan", name="Plan", access_level="comment",
+        )
+        cid = (r.data or {}).get("canvas_id") if r.ok else None
+        if cid:
+            slackcode.set_plan_canvas_id(channel_id, cid)
+        else:
+            logger.warning("plan canvas publish failed (%s)", r.error)
+    except Exception:  # noqa: BLE001 — the plan is chrome; never block the session
+        logger.warning("plan canvas publish raised", exc_info=True)
+
+
+async def _refresh_plan(client: AsyncWebClient, logger: Logger, channel_id: str, scenario) -> None:
+    """Re-render the living Plan from the channel's current state and edit the
+    canvas in place (ticks steps off). Best-effort; no-op without a plan."""
+    fn = getattr(scenario, "plan_canvas", None)
+    cid = slackcode.get_plan_canvas_id(channel_id)
+    if not callable(fn) or not cid or slackcode.is_session_stopped(channel_id):
+        return
+    try:
+        r = await slackcode.set_canvas_content(
+            client, canvas_id=cid, markdown=_call_with_state(fn, **_plan_state(channel_id)),
+        )
+        if not r.ok:
+            logger.warning("plan canvas refresh failed (%s)", r.error)
+    except Exception:  # noqa: BLE001
+        logger.warning("plan canvas refresh raised", exc_info=True)
+
+
+# Code channels whose designer has already reviewed a shared asset — the review
+# beat fires once per session (a second share is just ignored). In-memory: a
+# restart re-arms it, which is harmless.
+_ASSET_REVIEWED: set[str] = set()
+# A short beat between the share landing and the designer "replying".
+_ASSET_REVIEW_DELAY_S = 2.5
+
+
+async def run_asset_review(
+    client: AsyncWebClient, logger: Logger, cfg: slackcode.SlackCodeConfig, channel_id: str,
+) -> None:
+    """A bare asset share (e.g. the Canva link) in a story channel: no agent turn —
+    the asset is a story prop and the image is hardcoded. If the scenario scripts
+    an ``on_asset`` beat, the designer reviews it in the channel (once per
+    session); otherwise the share is ignored silently. The image itself only
+    changes on the "use this image" ask (run_image_edit)."""
+    scenario = _scenario_for(channel_id, cfg)
+    getter = getattr(scenario, "participant_beats", None)
+    try:
+        has_review = callable(getter) and any(
+            isinstance(b, dict) and b.get("phase") == "on_asset" for b in (getter() or [])
+        )
+    except Exception:  # noqa: BLE001 — bad beat data must never break the handler
+        has_review = False
+    if not has_review or channel_id in _ASSET_REVIEWED:
+        return
+    _ASSET_REVIEWED.add(channel_id)
+    await asyncio.sleep(_ASSET_REVIEW_DELAY_S)
+    if slackcode.is_session_stopped(channel_id):
+        return
+    await _post_participant_beats(client, logger, channel_id, scenario, "on_asset")
+
+
 async def run_show_metrics(
     client: AsyncWebClient, logger: Logger, cfg: slackcode.SlackCodeConfig, channel_id: str,
 ) -> None:
@@ -725,12 +990,14 @@ async def run_show_metrics(
     async def _do_metrics_work() -> None:
         await _publish_dashboard(client, channel_id, scenario)
 
+    report = getattr(scenario, "metrics_report", None)
     await run_scripted_beat(
         client=client, logger=logger, channel_id=channel_id, scenario=scenario,
         action="metrics", work=_do_metrics_work,
         verdict_markdown=(
-            ":bar_chart: The reliability numbers are in the *Dashboard* tab — "
-            "before vs after the refactor. Scoped to this channel's members."
+            report() if callable(report) else
+            ":bar_chart: The numbers are in the *Dashboard* tab — before vs after the change. "
+            "Scoped to this channel's members."
         ),
     )
 
@@ -750,7 +1017,11 @@ async def run_make_recap(
         await _no_scripted_action(client, channel_id)
         return
 
-    markdown = scenario.recap_canvas()  # canvas-flavored markdown (## sections)
+    markdown = _call_with_state(scenario.recap_canvas, **_page_state(channel_id))  # canvas markdown (## sections)
+    # A story can rename the canvas (e.g. a PRD written from the prototype).
+    title = getattr(scenario, "RECAP_TITLE", "") or "Leadership recap"
+    tab = getattr(scenario, "RECAP_TAB", "") or "Recap"
+    slackcode.set_channel_flag(channel_id, "recap")
     existing = slackcode.get_recap_canvas_id(channel_id)
 
     # The canvas work runs inside the Thinking pulse; it records the pointer text
@@ -763,20 +1034,20 @@ async def run_make_recap(
             if existing:
                 r = await slackcode.set_canvas_content(client, canvas_id=existing, markdown=markdown)
                 if r.ok:
-                    outcome["verdict"] = ":memo: Updated the *Leadership recap* canvas tab."
+                    outcome["verdict"] = f":memo: Updated the *{title}* canvas tab."
                     outcome["audit"] = f":memo: Claude AI Slack Code recap canvas updated in <#{channel_id}>."
                     return
                 logger.warning("recap canvas edit failed (%s) — re-publishing", r.error)
             r = await slackcode.publish_canvas_view(
-                client, channel_id, title="Leadership recap", markdown=markdown,
-                view_key="recap", name="Recap", access_level="comment",
+                client, channel_id, title=title, markdown=markdown,
+                view_key="recap", name=tab, access_level="comment",
             )
             if r.ok:
                 cid = (r.data or {}).get("canvas_id")
                 if cid:
                     slackcode.set_recap_canvas_id(channel_id, cid)
-                outcome["verdict"] = (":memo: Turned this session into a *Leadership recap* — "
-                                      "it's in the *Recap* canvas tab (comment away; I'll keep it current).")
+                outcome["verdict"] = (f":memo: Turned this session into a *{title}* — "
+                                      f"it's in the *{tab}* canvas tab (comment away; I'll keep it current).")
                 outcome["audit"] = f":memo: Claude AI Slack Code recap canvas published in <#{channel_id}>."
                 return
             logger.warning("recap canvas publish failed (%s) — falling back to message", r.error)
@@ -789,8 +1060,8 @@ async def run_make_recap(
     for ln in markdown.splitlines():
         lines_out.append(f"*{ln[3:].strip()}*" if ln.startswith("## ") else ln)
     fallback_msg = (
-        ":memo: *Leadership recap* — 5 parts, built from this session and the "
-        "reliability dashboard, ready to share:\n\n" + "\n".join(lines_out)
+        f":memo: *{title}* — 5 parts, built from this session and the "
+        "dashboard, ready to share:\n\n" + "\n".join(lines_out)
     )
 
     # Pulse KEPT IN SYNC with the canvas: open the spinner, HOLD (spins alone —
@@ -838,8 +1109,8 @@ def recognize_code_action(text: str) -> str | None:
     if any(k in low for k in (" patch", "generate a patched", " fix ", "apply the fix",
                               "fix it", "make it safe", "make it online-safe")):
         return "patch"
-    if any(k in low for k in (" recap", " slides", " deck", " leadership",
-                              "postmortem", "post-mortem", "post mortem", "write-up", "writeup")):
+    if any(k in low for k in (" recap", " slides", " deck", " leadership", " prd",
+                              "product requirements", "postmortem", "post-mortem", "post mortem", "write-up", "writeup")):
         return "recap"
     if any(k in low for k in ("dashboard", "metrics", "conversion", "it working",
                               "actually working", "the numbers")):
@@ -884,6 +1155,74 @@ def recognize_faq_edit(text: str) -> bool:
     import re as _re
     norm = _re.sub(r"\s+", " ", (text or "").strip().lower()).strip(" .!?")
     return norm in _FAQ_CANONICAL_PHRASES
+
+
+def recognize_image_edit(text: str, scenario) -> bool:
+    """True iff `text` contains one of the scenario's IMAGE_EDIT_PHRASES ("use this
+    image", …) — the pre-baked image-swap ask.
+
+    Phrase-anywhere (after case/whitespace/punctuation normalization), so "hey, use
+    this image" and "use this image please" both land. Scenarios without an image
+    edit never match, so the phrase falls through to the normal paths there."""
+    import re as _re
+    phrases = getattr(scenario, "IMAGE_EDIT_PHRASES", None)
+    if not phrases or not hasattr(scenario, "image_diff"):
+        return False
+    norm = " " + _re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip() + " "
+    return any(f" {p} " in norm for p in phrases)
+
+
+def recognize_slide_edit(text: str, scenario) -> bool:
+    """True iff `text` contains one of the scenario's SLIDE_EDIT_PHRASES ("add the
+    second slide", …) — the pre-baked carousel-slide ask. Same phrase-anywhere
+    matching as recognize_image_edit; scenarios without a slide edit never match."""
+    import re as _re
+    phrases = getattr(scenario, "SLIDE_EDIT_PHRASES", None)
+    if not phrases or not hasattr(scenario, "slide_diff"):
+        return False
+    norm = " " + _re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).strip() + " "
+    return any(f" {p} " in norm for p in phrases)
+
+
+# A Slack-formatted link (<https://…|label> / <https://…>) or a bare URL.
+_LINK_RE = r"<https?://[^>]*>|https?://\S+"
+
+
+def event_links(event: dict) -> str:
+    """Links a message carries OUTSIDE its text — a shared message / app unfurl
+    attachment (e.g. a design shared from Slackbot or the Canva app) — as
+    Slack-formatted ``<url>`` tokens, for recognize_asset_share. Never raises."""
+    urls: list[str] = []
+    try:
+        for att in event.get("attachments") or []:
+            if not isinstance(att, dict):
+                continue
+            for key in ("from_url", "original_url", "title_link", "app_unfurl_url"):
+                url = att.get(key)
+                if isinstance(url, str) and url.startswith(("http://", "https://")):
+                    urls.append(url)
+    except Exception:  # noqa: BLE001 — link sniffing must never break the handler
+        return ""
+    return " ".join(f"<{u}>" for u in dict.fromkeys(urls))
+
+
+def recognize_asset_share(text: str, scenario) -> bool:
+    """True iff `text` just shares an asset link (a Canva/Figma/Drive design, …) in
+    a scenario with a pre-baked image edit, with no scripted ask attached.
+
+    The asset is a story prop: the image the demo uses is hardcoded, and the
+    "use this image" ask (recognize_image_edit, checked FIRST by the handlers)
+    triggers the swap. A bare share like "Sharing the latest asset: <link>" must be
+    IGNORED — otherwise it falls through to the live agent, which can't open the
+    link and improvises an edit. A link alongside a code action ("run the offer
+    check <link>") is not a bare share; the action keywords are matched with the
+    link stripped so a link label can't fake one."""
+    import re as _re
+    if not getattr(scenario, "IMAGE_EDIT_PHRASES", None) or not hasattr(scenario, "image_diff"):
+        return False
+    if not _re.search(_LINK_RE, text or ""):
+        return False
+    return recognize_code_action(_re.sub(_LINK_RE, " ", text)) is None
 
 
 async def run_code_action(
@@ -955,7 +1294,8 @@ async def run_slack_code_session(
                 f"(`{created.error}`) — replied in-thread instead.",
             )
         else:
-            logger.warning("code-channel create failed: %s", created.error)
+            logger.warning("code-channel create failed: %s (origin_ts=%s thread_ts=%s)",
+                           created.error, origin_message_ts, origin_thread_ts)
             await audit_log(
                 client,
                 f":warning: Claude AI `agents.conversations.create` → `{created.error}`. "
@@ -1068,6 +1408,9 @@ async def _run_session_body(
     # reused channel id can't inherit a prior session's artifact/patch. (Scenario
     # is set above; leave it.)
     slackcode.clear_channel_patched(code_channel_id)
+    slackcode.clear_channel_image_swapped(code_channel_id)
+    slackcode.clear_channel_story(code_channel_id)
+    _ASSET_REVIEWED.discard(code_channel_id)
     slackcode.clear_channel_artifact(code_channel_id)
     slackcode.clear_recap_canvas_id(code_channel_id)
 
@@ -1104,7 +1447,7 @@ async def _run_session_body(
                 {"name": f"check-{scenario.CHECK_LABEL}",
                  "description": f"Run the {scenario.CHECK_LABEL} check on the current change"},
                 {"name": "patch", "description": "Generate a patched version that fixes the check"},
-                {"name": "show-metrics", "description": "Open the reliability dashboard"},
+                {"name": "show-metrics", "description": "Open the dashboard"},
                 {"name": "make-recap", "description": "Turn this session into a leadership recap"},
                 {"name": "create-pr", "description": "Open a pull request for the current branch"},
                 {"name": "run-tests", "description": "Run the test suite and report back"},
@@ -1152,6 +1495,8 @@ async def _run_session_body(
         # build). No-op for freeform (no PARTICIPANTS); fires for seeded live-
         # editable stories like website_redesign.
         await _post_participant_beats(client, logger, code_channel_id, scenario, "arrival")
+        # The Plan tab first: what Claude intends to do, from the origin thread.
+        await _publish_plan(client, logger, code_channel_id, scenario)
         result = await run_artifact_turn(
             client=client, logger=logger, cfg=cfg, channel_id=code_channel_id,
             task_text=task_text, first_turn=True, branch=artifact_branch,
@@ -1809,6 +2154,8 @@ _PULSE_HOLD_BY_ACTION = {
     "patch": 4.0,    # reworking the code path
     "metrics": 2.5,  # just reading numbers off a dashboard — lightest
     "recap": 3.0,    # writing up the summary
+    "image": 3.0,    # dropping a supplied image into the page
+    "slide": 3.0,    # adding a carousel slide
 }
 
 
@@ -1870,6 +2217,8 @@ def _scenario_thinking_line(scenario, action: str) -> str:
         "patch": "Applying the patch…",
         "metrics": "Pulling the numbers…",
         "recap": "Writing the recap…",
+        "image": "Swapping in the new image…",
+        "slide": "Adding the new slide…",
     }.get(action, "Working on it…")
 
 
@@ -2070,6 +2419,36 @@ def filename_for(task_text: str) -> str:
     return f"{slug[:40]}.html"
 
 
+# Embedded images (data URIs, e.g. a hardcoded banner) can be ~100KB of base64.
+# They must never be pasted into the model's prompt or rendered in the Code diff,
+# so both see a short, stable token instead; the real URI is put back before the
+# page is published or stored.
+_DATA_URI_RE = r"data:image/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]{200,}"
+
+
+def shrink_data_uris(html: str) -> tuple[str, dict[str, str]]:
+    """Swap each large embedded image for a stable token. Returns the shrunk html
+    and {token: original_uri} for restore_data_uris."""
+    import hashlib as _hashlib
+    import re as _re
+    mapping: dict[str, str] = {}
+
+    def _token(m) -> str:
+        uri = m.group(0)
+        tok = f"data:image/embedded;asset={_hashlib.sha1(uri.encode()).hexdigest()[:10]}"
+        mapping[tok] = uri
+        return tok
+
+    return _re.sub(_DATA_URI_RE, _token, html or ""), mapping
+
+
+def restore_data_uris(html: str, mapping: dict[str, str]) -> str:
+    """Put the real embedded images back in place of shrink_data_uris tokens."""
+    for tok, uri in mapping.items():
+        html = html.replace(tok, uri)
+    return html
+
+
 async def _publish_html_diff(
     client: AsyncWebClient, logger: Logger, channel_id: str, *,
     prev_html: str, new_html: str, filename: str, branch: str,
@@ -2079,7 +2458,7 @@ async def _publish_html_diff(
     concurrent setView calls race). The diff is incremental vs prev_html (full
     all-additions when prev_html==""). Both are best-effort — a failure is logged
     + audited via _report_view_results, never fatal."""
-    diff = unified_diff(prev_html, new_html, filename)
+    diff = unified_diff(shrink_data_uris(prev_html)[0], shrink_data_uris(new_html)[0], filename)
     reported: list[tuple[str, object]] = []
     if diff:
         diff_r = await slackcode.set_view(
@@ -2217,10 +2596,15 @@ async def run_artifact_turn(
                 "published; only regenerate it when the user asks for a change."
             )
         elif prev:
+            # Embedded images go to the model as short tokens (see shrink_data_uris);
+            # it's told to keep them, and they're restored on the way back.
+            prev_html_small, _embedded = shrink_data_uris(prev["html"])
             parts.append(
                 f"The current file is `{prev['filename']}`. Here it is in full:\n\n"
-                f"```html\n{prev['html']}\n```\n\n"
+                f"```html\n{prev_html_small}\n```\n\n"
                 "Apply the requested change and return the COMPLETE updated file."
+                + (" Keep every `data:image/embedded;asset=…` src exactly as written — "
+                   "those are images already embedded in the page." if _embedded else "")
             )
         parts.append(f"Request: {task_text}")
         agent_input = "\n\n".join(parts)
@@ -2235,28 +2619,37 @@ async def run_artifact_turn(
             return ArtifactTurnResult(reply_ts=None, artifact_present=_artifact_present(), ok=False)
         existing_session_id = session_store.get_session(channel_id, "")
         response_text, new_session_id = "", None
-        try:
-            # Freeform / edit path: the diff IS the agent's generated HTML, so there's
-            # nothing pre-built to show early — the wait is the real build. We DON'T
-            # cap it (a cap can only produce a scaffold, which then can't heal to the
-            # real file without a second prompt). Instead the "Thinking" spinner stays
-            # up the whole time showing the working steps (_WORKING_PLAN: read → wrote
-            # the file → refreshed the tabs) so it reads as WORKING, not hung, and
-            # settles when the diff lands (finalize_thinking_stream below). Only the
-            # overall RUN_AGENT_TIMEOUT (agent.py, default 300s) bounds a true hang.
-            # Scripted stories — the demo heroes — publish their pre-built diff BEFORE
-            # the agent (see _run_session_body) and are unaffected by this wait.
-            response_text, new_session_id = await run_agent_offloop(
-                agent_input, session_id=existing_session_id, deps=deps,
-                user_display_name=user_display_name, with_tools=False,
-            )
-        except Exception as e:
-            logger.warning("run_agent failed in artifact turn (%s)", type(e).__name__, exc_info=True)
-            if not _stopped():
-                await _close_stream_with_text(
-                    streamer, client, channel_id, "I hit an error working that. Try again?",
+        # A scenario that scripts its opening reply skips the live narration on the
+        # seeded-display turn: the narration only sees the one-line request (not the
+        # origin thread), so it wanders off-story. Same deliberate dwell as the
+        # other pre-built beats, so the Thinking spinner isn't a flash.
+        opening = getattr(_scenario_for(channel_id, cfg), "opening_reply", None) if seeded_display else None
+        if callable(opening):
+            await asyncio.sleep(_prebuilt_dwell_s())
+            response_text = opening()
+        else:
+            try:
+                # Freeform / edit path: the diff IS the agent's generated HTML, so there's
+                # nothing pre-built to show early — the wait is the real build. We DON'T
+                # cap it (a cap can only produce a scaffold, which then can't heal to the
+                # real file without a second prompt). Instead the "Thinking" spinner stays
+                # up the whole time showing the working steps (_WORKING_PLAN: read → wrote
+                # the file → refreshed the tabs) so it reads as WORKING, not hung, and
+                # settles when the diff lands (finalize_thinking_stream below). Only the
+                # overall RUN_AGENT_TIMEOUT (agent.py, default 300s) bounds a true hang.
+                # Scripted stories — the demo heroes — publish their pre-built diff BEFORE
+                # the agent (see _run_session_body) and are unaffected by this wait.
+                response_text, new_session_id = await run_agent_offloop(
+                    agent_input, session_id=existing_session_id, deps=deps,
+                    user_display_name=user_display_name, with_tools=False,
                 )
-            return ArtifactTurnResult(reply_ts=None, artifact_present=_artifact_present(), ok=False)
+            except Exception as e:
+                logger.warning("run_agent failed in artifact turn (%s)", type(e).__name__, exc_info=True)
+                if not _stopped():
+                    await _close_stream_with_text(
+                        streamer, client, channel_id, "I hit an error working that. Try again?",
+                    )
+                return ArtifactTurnResult(reply_ts=None, artifact_present=_artifact_present(), ok=False)
 
         if new_session_id:
             session_store.set_session(channel_id, "", new_session_id)
@@ -2282,6 +2675,8 @@ async def run_artifact_turn(
         # not to emit html — if it did anyway, ignore it (turn 0 is a display, not
         # a rebuild) and just narrate; the seed stays the base for later edits.
         new_html, prose = extract_html(response_text)
+        if new_html and prev and not seeded_display:
+            new_html = restore_data_uris(new_html, shrink_data_uris(prev["html"])[1])
         if new_html and not seeded_display:
             filename = (prev or {}).get("filename") or seed_filename or filename_for(task_text)
             if not _stopped():
@@ -2359,9 +2754,12 @@ async def _close_stream_with_text(
         pass
 
 
-async def run_view_probe(client: AsyncWebClient, logger: Logger, channel_id: str) -> list[str]:
-    """Live-probe the confidential-beta setView/setProperties shapes and return a
-    list of human-readable result lines (also logged).
+async def run_view_probe(
+    client: AsyncWebClient, logger: Logger, channel_id: str, *, include_archive: bool = False,
+) -> list[str]:
+    """Live-probe the confidential-beta setView/setProperties/setCommands/status
+    shapes and return a list of human-readable result lines (also logged). See
+    docs/slack-code-api-audit.md for what each probe here is confirming and why.
 
     Callable two ways with the SAME code:
       • qa.py --probe (an external AsyncWebClient built from a pasted xoxb), or
@@ -2370,8 +2768,13 @@ async def run_view_probe(client: AsyncWebClient, logger: Logger, channel_id: str
 
     Non-destructive-ish: setView upserts throwaway `probe_canvas_*` keys; the
     context-bar action item REPLACES the bar with one probe item (a normal turn
-    repaints it). Every call is best-effort; a failure becomes a result line, not
-    an exception."""
+    repaints it); the status cycle ends back at `active`. Every call is
+    best-effort; a failure becomes a result line, not an exception.
+
+    `include_archive=True` ALSO archives the channel at the end (terminal —
+    the channel is gone after) to confirm `archive_channel(summary_message_ts=…)`
+    persists the summary. Off by default; pass it only when you're done with
+    this channel."""
     lines: list[str] = []
 
     def _rec(label: str, r) -> None:
@@ -2393,11 +2796,26 @@ async def run_view_probe(client: AsyncWebClient, logger: Logger, channel_id: str
     # content (every inline variant returned missing_required_arg because the
     # missing arg was canvas_id). publish_canvas_view does the two-step; this
     # proves the flow still works and leaves a throwaway probe canvas tab.
-    _rec("canvas/publish_canvas_view(create+attach)",
-         await slackcode.publish_canvas_view(
-             client, channel_id, title="Probe Canvas",
-             markdown="## Probe\nConfirmed two-step canvas flow.",
-             view_key="probe_canvas", name="Probe Canvas", access_level="comment"))
+    canvas_r = await slackcode.publish_canvas_view(
+        client, channel_id, title="Probe Canvas",
+        markdown="## Probe\nConfirmed two-step canvas flow.",
+        view_key="probe_canvas", name="Probe Canvas", access_level="comment")
+    _rec("canvas/publish_canvas_view(create+attach)", canvas_r)
+
+    # --- setCanvasContent (UNCONFIRMED: does it preserve a comment's anchor?
+    # This probe only confirms the call succeeds and the content lands — it
+    # canNOT confirm anchor preservation unsupervised, since that needs a human
+    # to add a comment to the probe canvas FIRST. Re-run this probe a second
+    # time, after adding a comment to "Probe Canvas" in Slack, and check by eye
+    # that the comment is still anchored to the right line afterward.)
+    canvas_id = (canvas_r.data or {}).get("canvas_id") if canvas_r.ok else None
+    if canvas_id:
+        _rec("setCanvasContent(update, check comment anchors by eye)",
+             await slackcode.set_canvas_content(
+                 client, canvas_id=canvas_id,
+                 markdown="## Probe\nUpdated by setCanvasContent — comment anchors should survive this."))
+    else:
+        lines.append("setCanvasContent: skipped (no canvas_id from publish_canvas_view)")
 
     # --- Interactive context-bar item (click it, read the inbound event) ---
     _rec("setProperties/context_bar_item_type=action",
@@ -2412,6 +2830,37 @@ async def run_view_probe(client: AsyncWebClient, logger: Logger, channel_id: str
     if lv.ok and lv.data:
         lines.append(f"listViews raw data: {lv.data}")
         logger.warning("view-probe listViews raw: %s", lv.data)
+
+    # --- setCommands (per-channel slash commands; full-set-replace) ---
+    _rec("setCommands([probe-cmd])",
+         await slackcode.set_commands(
+             client, channel_id,
+             [{"name": "probe-cmd", "description": "Probe command — safe to ignore.",
+               "argument_hint": "[anything]"}]))
+    lines.append("setCommands: type /probe-cmd in this channel and watch stderr for the inbound "
+                 "POST (confirms code_channels.slash_command_url delivery, or Socket Mode routing).")
+    # Clear the probe command set so it doesn't linger after the probe (empty
+    # array clears, per the docs) — but only OUR command; a real demo may have
+    # registered its own set first, so don't silently replace it with [].
+    _rec("setCommands([]) — clearing the probe command", await slackcode.set_commands(client, channel_id, []))
+
+    # --- Session status cycle: processing -> suspended -> active (docs name
+    # exactly these four states; only active/processing are exercised by the
+    # normal demo flow, so this confirms suspended/closed don't error even if
+    # we don't build on them). Ends back at active so the channel is left in
+    # its normal resting state for whatever runs next.
+    for status in ("processing", "suspended", "active"):
+        _rec(f"setStatus({status!r})", await slackcode.set_session_status(client, channel_id, status))
+
+    if include_archive:
+        _rec("setStatus('closed') before archive", await slackcode.set_session_status(client, channel_id, "closed"))
+        summary = await client.chat_postMessage(
+            channel=channel_id, text="Probe run complete — archiving with this message as the summary.")
+        _rec("archive(summary_message_ts=...)",
+             await slackcode.archive_channel(client, channel_id, summary_message_ts=summary.get("ts")))
+    else:
+        lines.append("archive: skipped (include_archive=False) — pass it when you're done with this channel.")
+
     return lines
 
 
@@ -2431,13 +2880,21 @@ async def _post_artifact_summary_and_archive(
         return
     art = slackcode.get_channel_artifact(channel_id)
     fname = (art or {}).get("filename") or "the file"
+    # A scripted story names its own next step (e.g. "share Mia's artwork, then
+    # run the check"); everything else gets the generic live-edit nudge.
+    slug = slackcode.get_channel_scenario(channel_id)
+    hint = getattr(load_scenario(slug), "first_pass_hint", None) if slug else None
+    next_step = (
+        hint() if callable(hint) else
+        "Tell me what to change — e.g. _\"make the background darker\"_ — and I'll update both."
+    )
     try:
         summary = await client.chat_postMessage(
             channel=channel_id,
             markdown_text=(
                 f":white_check_mark: First pass up on `{branch}`.\n"
                 f"• Built `{fname}` — it's in the *Code* tab (diff) and rendered in the *Preview* tab.\n"
-                f"• Tell me what to change — e.g. _\"make the background darker\"_ — and I'll update both.\n"
+                f"• {next_step}\n"
                 "_AI-generated; give it a review before you ship it._"
             ),
         )

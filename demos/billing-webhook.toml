@@ -1,0 +1,7 @@
+name     = "Billing webhook refactor"
+customer = "Acme"
+summary  = "Backend story: move the Stripe webhook handler onto a durable queue. Diff + reliability dashboard, no preview."
+surfaces  = ["slack_code"]
+scenarios = ["billing_webhook"]
+trigger   = "refactor the billing webhook to a durable queue"
+example   = true

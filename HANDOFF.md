@@ -42,19 +42,23 @@ technical story, and which artifacts to show (Code diff, HTML Preview,
 Dashboard, Canvas recap) — then writes a deterministic scenario + a matching
 seed script and verifies them with `qa.py --self-test`. Because the story is
 authored ahead of time, it renders instantly at demo time (no freeform LLM wait).
-The spoofed agent defaults to Claude; swap the persona if the customer wants to
-see a different AI agent in the channel.
+The spoofed agent defaults to Claude; switch it in `./demo` → Bot settings (`A`) if the
+customer wants to see a different AI agent in the channel.
 
 Prefer a built-in example? The five shipped stories run as-is; the default is
 `website_redesign`.
 
 ### 4. Run a demo **[your Terminal]**
 
-Seed the origin thread, then launch the bot:
+Every demo is listed in the demo manager. Open it, pick your demo, press
+*Post backstory* to stage the origin thread, then *Start bot* in the top bar
+(one bot serves every demo, so you start it once). Each demo's page also lists
+every phrase that opens it:
 
 ```bash
-.venv/bin/python channels/seed_<your-slug>.py --create
-SLACK_CODE_ENABLED=1 ./run.sh
+./demo                                   # the demo manager (terminal UI)
+./demo run <demo-id> post-backstory      # or the same thing as one command
+SLACK_CODE_ENABLED=1 ./run.sh            # or launch the bot without the manager
 ```
 
 Then in Slack, @-mention the bot in the seeded thread with the trigger phrase.
@@ -77,14 +81,15 @@ channel in Slack:
 slack api conversations.archive --channel <C0…>
 ```
 
-Custom scenarios/seed scripts you generated stay in the repo for reuse; delete
-the `scenarios/<slug>.py`, `scenarios_tag/<slug>.py`, and `channels/seed_<slug>.py`
-files (and their `_KNOWN`/`_ROUTE_KEYWORDS` entries) if you want them gone.
+Custom demos you generated stay in the repo for reuse. To remove one, delete it
+in `./demo` (or `./demo delete <demo-id>`): its scenario, seed script, docs and
+assets move to `.trash/`, and `./demo restore` brings them back. To keep a demo
+but stop its trigger phrase opening it, hide it instead (`./demo hide <demo-id>`).
 
 ## What NOT to commit
 
-`tokens.json`, `.env`, `.slack/apps*.json`, `*_state.json`, and
-`personas/_demo_context.md` are gitignored — keep them that way. Before pushing,
+`tokens.json`, `.env`, `.slack/`, `*_state.json`, `demos/custom/`, `qa_local/`,
+`CLAUDE.local.md` and `personas/_demo_context.md` are gitignored — keep them that way. Before pushing,
 run the secret check:
 
 ```bash

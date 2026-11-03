@@ -16,10 +16,17 @@ from listeners.events.finalize import finalize_response
 from listeners.events.slack_code import (
     _scenario_for,
     recognize_code_action,
+    event_links,
+    recognize_asset_share,
     recognize_faq_edit,
+    recognize_image_edit,
+    recognize_slide_edit,
     run_artifact_turn,
+    run_asset_review,
     run_code_action,
     run_faq_edit,
+    run_image_edit,
+    run_slide_edit,
     run_slack_code_session,
 )
 from listeners.events.slack_tag import run_tag_session, run_tag_followup
@@ -62,6 +69,9 @@ async def handle_app_mentioned(
         return
     if await slackcode.is_own_bot_event(client, event):
         logger.warning("app_mention SKIP: own bot echo (bot_id=%s)", event.get("bot_id"))
+        return
+    if slackcode.is_cast_member(event.get("user")):
+        logger.warning("app_mention SKIP: scripted persona %s", event.get("user"))
         return
 
     channel_id = context.channel_id
@@ -122,7 +132,7 @@ async def handle_app_mentioned(
                 logger.warning("app_mention GATE: channel=%s in_code_channel=True → in-session reply", channel_id)
                 await _reply_in_code_channel(
                     client=client, logger=logger, channel_id=channel_id,
-                    cleaned_text=cleaned_text, user_id=user_id,
+                    cleaned_text=cleaned_text, user_id=user_id, links=event_links(event),
                 )
                 return
 
@@ -266,6 +276,7 @@ async def _reply_in_code_channel(
     channel_id: str,
     cleaned_text: str,
     user_id: str | None,
+    links: str = "",
 ) -> None:
     """Answer an @mention that arrived INSIDE a code channel, per the Slack Code
     spec ("begin work normally"): run the agent and post TOP-LEVEL (no thread_ts),
@@ -291,6 +302,24 @@ async def _reply_in_code_channel(
         if recognize_faq_edit(cleaned_text):
             logger.warning("code-channel FAQ edit mention: channel=%s", channel_id)
             await run_faq_edit(client, logger, _SLACK_CODE_CFG, channel_id)
+            return
+        # The pre-baked "use this image" edit (scenarios with an image_diff) —
+        # same instant short-circuit as the FAQ edit.
+        if recognize_image_edit(cleaned_text, scenario):
+            logger.warning("code-channel image edit mention: channel=%s", channel_id)
+            await run_image_edit(client, logger, _SLACK_CODE_CFG, channel_id)
+            return
+        # The pre-baked "add the slide" edit (scenarios with a slide_diff).
+        if recognize_slide_edit(cleaned_text, scenario):
+            logger.warning("code-channel slide edit mention: channel=%s", channel_id)
+            await run_slide_edit(client, logger, _SLACK_CODE_CFG, channel_id)
+            return
+        # A bare asset-link share (the Canva design is a story prop — the image is
+        # hardcoded) is never handed to the live agent to "use": the designer
+        # reviews it if the story scripts that, else it's ignored.
+        if recognize_asset_share(f"{cleaned_text} {links}", scenario):
+            logger.warning("code-channel asset share (mention): channel=%s", channel_id)
+            await run_asset_review(client, logger, _SLACK_CODE_CFG, channel_id)
             return
         action = recognize_code_action(cleaned_text)
         if action:

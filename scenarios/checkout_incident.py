@@ -44,6 +44,18 @@ CHECK_LABEL = "load-test"
 # diff + the latency/error dashboard. "diff" is always published.
 ARTIFACTS = {"diff", "dashboard"}
 
+# --- Routing ------------------------------------------------------------------
+# The @-mention phrases that open THIS story's code channel. Lower
+# ROUTE_PRIORITY is matched first (see scenarios.route_scenario).
+# The P1 latency/rollback story. Kept specific so it doesn't swallow a generic
+# "fix" — "checkout"/"payment-service"/"retry storm"/"rollback".
+ROUTE_PRIORITY = 40
+ROUTE_KEYWORDS = (
+    "checkout api", "checkout latency", "payment-service", "payment service",
+    "retry storm", "roll back the", "rollback the", "p99", "latency spike",
+    "orders failing", "incident",
+)
+
 
 # --- Code tab: the diff (pre-patch and post-patch) ---------------------------
 def base_diff() -> str:
@@ -282,7 +294,7 @@ def participant_beats() -> list[dict]:
     return [
         {"name": "Ralph", "phase": "arrival",
          "text": (":eyes: Following — I want to see the retry path before we re-enable. "
-                  "Let's see what Claude comes back with.")},
+                  "Let's see what {agent} comes back with.")},
         {"name": "Elliott", "phase": "on_artifacts",
          "text": ("Diff's up already — nice. Hold it to a load test at today's peak "
                   "before we roll forward.")},

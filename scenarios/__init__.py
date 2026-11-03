@@ -11,10 +11,13 @@ content (a full HTML page, unified diffs, Block Kit rows). Env vars only pick
 *which* scenario is active (``SLACK_CODE_SCENARIO``); the content lives in code
 so it's diffable, self-testable offline, and identical every demo run.
 
-To add a demo: copy ``_template.py`` → ``<slug>.py``, fill the module-level
-constants + functions it documents, set ``SLACK_CODE_SCENARIO=<slug>`` (see
-``agent.slackcode.load_slack_code_config``), seed a matching origin thread, and
-relaunch. No logic changes — only data.
+To add a demo: copy ``_template.py`` → ``<slug>.py`` and fill the module-level
+constants + functions it documents, including ``ROUTE_KEYWORDS`` (the phrases
+that open its code channel). The module registers itself: every non-underscore
+module in this package is discovered at import, so there is no list to edit. A
+private demo's stories live in ``demos/custom/<id>/scenarios/`` instead and are
+discovered the same way (see ``demokit/custom.py``).
+Seed a matching origin thread and relaunch. No logic changes — only data.
 
 Contract every scenario module must satisfy (duck-typed; see ``_template.py``):
   SLUG: str
@@ -31,13 +34,32 @@ Contract every scenario module must satisfy (duck-typed; see ``_template.py``):
   dashboard_blocks() -> list[dict]                    # the Dashboard tab (Block Kit) —
                                                       #   only needed if "dashboard" in ARTIFACTS
   recap_canvas() -> str                               # the recap (posted as a message)
+  RECAP_TITLE / RECAP_TAB: str                        # OPTIONAL — the recap canvas's title and tab
+                                                      #   name (default "Leadership recap" / "Recap")
   provenance() -> dict[str, str]                      # decision → rationale (session-primed)
   render_provenance() -> str                          # provenance rendered for the first agent turn
   CHECK_LABEL: str                                    # e.g. "contrast" → /check-contrast
+  ROUTE_KEYWORDS: tuple[str, ...]                     # phrases that route a mention to this story
+                                                      #   (freeform declares none — it's the fallback)
+  ROUTE_PRIORITY: int                                 # OPTIONAL — lower is matched first (default 50);
+                                                      #   specific stories < generic ones
   PARTICIPANTS: list[dict]                            # OPTIONAL — 1–2 origin-thread humans who
                                                       #   join the channel: {name, email_stem, role}
   participant_beats() -> list[dict]                   # OPTIONAL — their scripted chime-ins:
-                                                      #   {name, phase in {arrival,on_artifacts}, text}
+                                                      #   {name, phase in {arrival,on_artifacts,on_asset,on_image}, text}
+                                                      #   (on_asset = a designer's review when an asset link
+                                                      #   is shared; on_image = a reaction after the image
+                                                      #   swap; both need the image-edit hooks below)
+  IMAGE_EDIT_PHRASES / image_diff(patched) /         # OPTIONAL — the pre-baked "use this image" edit;
+    image_edit_report(patched)                        #   preview_html then takes image=
+  SLIDE_EDIT_PHRASES / slide_diff(patched) /         # OPTIONAL — a pre-baked second edit (e.g. add a
+    slide_edit_report(patched)                        #   carousel slide); preview_html then takes slide=
+  preview_fallbacks(patched, *, image, slide)         # OPTIONAL — [(name, html), …] smaller-image pages
+                                                      #   to try if Slack rejects a large Preview
+  plan_canvas(*, image, slide, checked, patched,     # OPTIONAL — a living Plan canvas tab, ticked off
+    recap) -> str                                     #   as each beat lands (only the flags it accepts)
+  opening_reply() / first_pass_hint() /              # OPTIONAL — scripted first reply, first-pass next
+    metrics_report()                                  #   step, and Dashboard reply (else generic lines)
 
 Not every scenario publishes every artifact — a backend refactor has no page to preview, a
 static-content change has no metrics. ARTIFACTS declares which tabs are real for the scenario;
@@ -46,21 +68,51 @@ the orchestrator only publishes those. "diff" (the Code tab) is always published
 from __future__ import annotations
 
 import importlib
+import logging
+import pkgutil
 from types import ModuleType
 
-# The scenarios shipped in-repo. A slug must map to a module in this package.
+from demokit.custom import package_dirs
+from demokit.state import hidden_slugs
+
+_log = logging.getLogger(__name__)
+
+# Private demos keep their stories in demos/custom/<id>/scenarios/. Adding those
+# folders to this package's path makes them import as scenarios.<slug> too.
+__path__ += package_dirs(__name__)
+
 # website_redesign is the default: its HTML Preview is a real landing page (the
-# hero artifact from Slack's launch demos). billing_webhook is the backend story
-# (diff + dashboard, no preview) — opt in via SLACK_CODE_SCENARIO=billing_webhook.
-# freeform is the SEEDLESS scenario (SEED = False): no scripted artifacts at all,
-# the agent builds the Code/Preview artifact from the user's request and edits it
-# live — opt in via SLACK_CODE_SCENARIO=freeform. Every code channel is live-
-# editable regardless of scenario; a *scripted* scenario just seeds turn-0 content.
-_KNOWN = {
-    "website_redesign", "billing_webhook", "freeform",
-    "checkout_incident", "flaky_test", "sql_migration",
-}
+# hero artifact from Slack's launch demos). freeform is the SEEDLESS scenario
+# (SEED = False): no scripted artifacts at all, the agent builds the Code/Preview
+# artifact from the user's request and edits it live; it's also where every
+# unmatched build task routes. Every code channel is live-editable regardless of
+# scenario; a *scripted* scenario just seeds turn-0 content.
 _DEFAULT = "website_redesign"
+_DEFAULT_PRIORITY = 50
+
+
+def _discover() -> tuple[set[str], dict[str, str]]:
+    """Import every scenario module in this package (``_``-prefixed ones like
+    ``_template`` are skipped). A module that fails to import is left out and
+    recorded, so a half-written scenario can't crash bot boot — the self-test
+    fails on it instead."""
+    known: set[str] = set()
+    errors: dict[str, str] = {}
+    for info in pkgutil.iter_modules(__path__):
+        if info.name.startswith("_") or info.ispkg:
+            continue
+        try:
+            importlib.import_module(f"{__name__}.{info.name}")
+        except Exception as e:  # noqa: BLE001 — one broken story must not take down the rest
+            errors[info.name] = f"{type(e).__name__}: {e}"
+            _log.error("scenario %r failed to import: %s", info.name, errors[info.name])
+            continue
+        known.add(info.name)
+    return known, errors
+
+
+# The registered scenarios (slug == module name) and any that failed to import.
+_KNOWN, DISCOVERY_ERRORS = _discover()
 
 
 def is_seeded(scenario) -> bool:
@@ -84,41 +136,24 @@ def load_scenario(slug: str | None) -> ModuleType:
     return importlib.import_module(f"scenarios.{name}")
 
 
-# Keyword → scenario routing. Lets ONE running agent offer all three stories: the
-# @-mention text that opens a code channel picks which one, so Sergio never has to
-# relaunch with a different SLACK_CODE_SCENARIO. Matched deterministically (a demo
-# should route the same way every time), most-specific stories first, and anything
-# that didn't match a canned story falls through to `freeform` (build from
-# scratch) — the intent gate (is_coding_task) already decided it's a build task.
-_ROUTE_KEYWORDS: list[tuple[str, tuple[str, ...]]] = [
-    # billing first: "refactor the billing webhook" also contains "refactor", but
-    # it's the billing story, so match its specific phrases before anything else.
-    ("billing_webhook", (
-        "billing webhook", "stripe webhook", "webhook refactor", "durable queue",
-        "billing cron", "webhook to a queue", "webhook durability",
-    )),
-    # checkout incident: the P1 latency/rollback story. Kept specific so it doesn't
-    # swallow a generic "fix" — "checkout"/"payment-service"/"retry storm"/"rollback".
-    ("checkout_incident", (
-        "checkout api", "checkout latency", "payment-service", "payment service",
-        "retry storm", "roll back the", "rollback the", "p99", "latency spike",
-        "orders failing", "incident",
-    )),
-    # flaky test: the everyday CI-flake story.
-    ("flaky_test", (
-        "flaky", "flake", "flakey", "login_redirect", "login redirect test",
-        "re-run", "rerun the test", "test is failing intermittently",
-    )),
-    # sql migration: the schema-change story.
-    ("sql_migration", (
-        "migration", "add a column", "add a last_login", "last_login_at",
-        "schema change", "alter table", "backfill", "add a field to",
-    )),
-    ("website_redesign", (
-        "homepage", "home page", "landing page", "redesign", "hero section",
-        "marketing site", "welloguard", "the site", "web page redesign",
-    )),
-]
+# Keyword → scenario routing. Lets ONE running agent offer every story: the
+# @-mention text that opens a code channel picks which one, so the SE never has to
+# relaunch with a different SLACK_CODE_SCENARIO. Each scenario declares its own
+# ROUTE_KEYWORDS; matched deterministically (a demo should route the same way
+# every time), lowest ROUTE_PRIORITY first (ties by slug), and anything that
+# didn't match a canned story falls through to `freeform` (build from scratch) —
+# the intent gate (is_coding_task) already decided it's a build task. Demos the
+# SE hid in ./demo are skipped (read per call, so hiding needs no restart).
+def route_table() -> list[tuple[str, tuple[str, ...]]]:
+    """``[(slug, keywords), …]`` in match order, hidden scenarios excluded."""
+    hidden = hidden_slugs("code")
+    rows = []
+    for slug in _KNOWN - hidden:
+        mod = importlib.import_module(f"{__name__}.{slug}")
+        kws = tuple(getattr(mod, "ROUTE_KEYWORDS", ()) or ())
+        if kws:
+            rows.append((int(getattr(mod, "ROUTE_PRIORITY", _DEFAULT_PRIORITY)), slug, kws))
+    return [(slug, kws) for _, slug, kws in sorted(rows)]
 
 
 def route_scenario(task_text: str, default: str = "") -> str:
@@ -133,7 +168,7 @@ def route_scenario(task_text: str, default: str = "") -> str:
     a caller that WANTS to force a story when the text is a canned keyword-less
     phrasing — pass "" (the norm) to always route by text. Never raises."""
     low = f" {(task_text or '').lower()} "
-    for slug, kws in _ROUTE_KEYWORDS:
+    for slug, kws in route_table():
         if any(kw in low for kw in kws):
             return slug
     d = (default or "").strip()

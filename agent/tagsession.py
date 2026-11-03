@@ -27,6 +27,8 @@ import json as _json
 import os
 from datetime import datetime
 
+from agent.persona import agent_name
+
 # Status glyphs (match the product screenshots).
 _GLYPH = {"complete": "✓", "in_progress": "✱", "pending": "○", "error": "⚠"}
 
@@ -188,7 +190,7 @@ def checklist_blocks(plan: dict, *, open_in_claude_url: str | None = None,
     if open_in_claude_url:
         blocks.append({
             "type": "context",
-            "elements": [{"type": "mrkdwn", "text": f"<{open_in_claude_url}|Open session in Claude>"}],
+            "elements": [{"type": "mrkdwn", "text": f"<{open_in_claude_url}|Open session in {agent_name()}>"}],
         })
     return blocks
 

@@ -24,7 +24,10 @@ from pathlib import Path
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# The repo root: the nearest folder up that holds config.py. A private demo's seed
+# sits deeper (demos/custom/<id>/channels/), so it can't just go up one level.
+ROOT = next(p for p in Path(__file__).resolve().parents if (p / "config.py").is_file())
+sys.path.insert(0, str(ROOT))
 from config import app_client, load_tokens  # noqa: E402
 
 CHANNEL_NAME = "welloguard-redesign"
@@ -76,13 +79,14 @@ def get_or_create_channel(client: WebClient, channel_id, name: str) -> str:
     if channel_id:
         return channel_id
     try:
-        resp = client.conversations_create(name=name)
+        resp = client.conversations_create(name=name, team_id=load_tokens().get("team_id"))
         return resp["channel"]["id"]
     except SlackApiError:
         # name_taken (or similar) — find the existing channel by name.
         cursor = None
         while True:
-            page = client.conversations_list(types="public_channel", limit=1000, cursor=cursor)
+            page = client.conversations_list(types="public_channel", limit=1000, cursor=cursor,
+                                             team_id=load_tokens().get("team_id"))
             for c in page["channels"]:
                 if c["name"] == name:
                     return c["id"]
