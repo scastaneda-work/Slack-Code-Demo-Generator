@@ -1,22 +1,33 @@
-"""Handler for `code_channel_action` — a click on an interactive context-bar item.
+"""Handler for a click on an interactive context-bar item (``item_type: "action"``).
 
-A context-bar item published with ``item_type: "action"`` renders as a clickable
-chip; clicking it delivers a ``code_channel_action`` event to the app (per the
-Code channel properties doc). The exact inbound payload shape is beta-confidential,
-so this handler is written to (1) LOG the entire raw event verbatim — so a live
-click reveals the shape — and (2) best-effort dispatch on whatever key/action id
-it can find, reusing the same scripted helpers the slash commands and mention
-keywords use. Once the shape is confirmed from a live capture, tighten the
-dispatch and drop the raw logging.
+CONFIRMED LIVE (2026-11-02, against a real code channel, superseding the
+2026-09-17 note below): clicking an action-type context-bar chip delivers a
+Bolt **slash_commands** request — `command` is `/` + the item's `key` (e.g.
+`key: "create-pr"` → `command: "/create-pr"`), NOT a `code_channel_action`
+events-api event and NOT a `block_actions` interactivity payload. (The beta's
+delivery mechanism evidently changed between the two live tests — both
+findings were accurate for their own date; this file now follows the current
+one.) So the real fix is a slash-command listener, registered below via
+`register()`, that catches any `/`-command not already claimed by a literal
+`app.command()` elsewhere (listeners/commands/__init__.py) and dispatches on
+the command name minus its leading slash — reusing `_KEY_TO_ACTION` as the
+shared key → scripted-action mapping.
 
-Registered in listeners/events/__init__.py and subscribed in manifest.json
-bot_events. Gated by SLACK_CODE_ENABLED via the shared config.
+`handle_code_channel_action` (this module's original name, kept for any
+genuine `code_channel_action`/`block_actions` delivery a future beta build
+might use) is STILL registered in listeners/events/__init__.py as a catch-all
+`app.action()` matcher too, so either delivery path is covered; only the
+slash-command path has been confirmed to actually fire as of this date.
+Gated by SLACK_CODE_ENABLED via the shared config.
 """
 from __future__ import annotations
 
 import json
+import re
 from logging import Logger
 
+from slack_bolt.async_app import AsyncApp
+from slack_bolt.context.ack.async_ack import AsyncAck
 from slack_sdk.web.async_client import AsyncWebClient
 
 from agent import slackcode
@@ -36,6 +47,57 @@ _KEY_TO_ACTION = {
     "recap": "recap",
     "probe-action": None,    # the dev probe chip — no-op beyond logging
 }
+
+# Slash commands already registered with their own literal handler in
+# listeners/commands/__init__.py — the catch-all below must NEVER steal these,
+# or Bolt's in-order matching becomes registration-order-dependent and fragile.
+# (Checked live: Bolt tries listeners in registration order and the first
+# match acks+handles, so registering the catch-all AFTER commands.register()
+# in app.py is what actually keeps this safe — this set is a second,
+# explicit guard against ever changing that order by accident.)
+_ALREADY_REGISTERED = {
+    "/patch", "/show-metrics", "/make-recap", "/create-pr", "/run-tests", "/summarize",
+}
+# Plus every dynamic /check-<label> command — mirror listeners/commands/__init__.py's
+# own registration loop so this guard never drifts from what's actually registered.
+try:
+    from scenarios import _KNOWN as _SCENARIO_SLUGS, load_scenario as _load_scenario
+    for _slug in _SCENARIO_SLUGS:
+        _label = getattr(_load_scenario(_slug), "CHECK_LABEL", "") or ""
+        if _label and _label != "build":
+            _ALREADY_REGISTERED.add(f"/check-{_label}")
+except Exception:  # noqa: BLE001 — never let a scenario-discovery hiccup block import
+    pass
+
+_CATCH_ALL_COMMAND_RE = re.compile(r"^/.+")
+
+
+async def handle_context_bar_command(
+    ack: AsyncAck, command: dict, client: AsyncWebClient, logger: Logger,
+) -> None:
+    """Catch-all slash-command handler for context-bar action-chip clicks.
+
+    Only runs for a `/`-command NOT already claimed by a literal handler (see
+    _ALREADY_REGISTERED) — Bolt's in-order registration means those are tried
+    first and win, so this never double-handles them; this guard is a second,
+    explicit belt against that ever silently breaking. Logs the raw command
+    payload (so an unmapped key's shape is captured, same spirit as the
+    original code_channel_action logging), then dispatches via _KEY_TO_ACTION
+    the same way handle_code_channel_action does for the other delivery path.
+    """
+    await ack()
+    cmd = (command.get("command") or "").strip()
+    logger.warning("context-bar slash command RAW: %s", json.dumps(command, default=str)[:3000])
+    if cmd in _ALREADY_REGISTERED:
+        # Should be unreachable (registration order means the real handler
+        # wins first) — but never silently double-post if it somehow isn't.
+        return
+    key = cmd.lstrip("/")
+    channel_id = command.get("channel_id", "")
+    if not channel_id or not key:
+        logger.warning("context-bar slash command: missing channel_id/key — see RAW above")
+        return
+    await _dispatch_key(client, logger, channel_id, key)
 
 
 async def handle_code_channel_action(
@@ -94,15 +156,23 @@ async def handle_code_channel_action(
         logger.info("code_channel_action: no client on this delivery shape; logged only")
         return
 
+    await _dispatch_key(client, logger, channel_id, key)
+
+
+async def _dispatch_key(client: AsyncWebClient, logger: Logger, channel_id: str, key: str) -> None:
+    """Shared dispatch for a clicked context-bar item's key, however it arrived
+    (slash command or code_channel_action/block_actions). check / patch /
+    metrics / recap → the same scripted helpers the slash commands and mention
+    keywords use; run-tests / create-pr → a canned post (mirrors their own
+    literal slash commands so a bar click behaves identically to typing the
+    command); anything unmapped is logged and otherwise ignored."""
+    if not _CFG.enabled:
+        return
     scripted = _KEY_TO_ACTION.get(str(key))
     if scripted:
-        # check / patch / metrics / recap → the same scripted helpers the slash
-        # commands and mention keywords use.
         await run_code_action(client, logger, _CFG, channel_id, scripted)
         return
 
-    # Canned-report chips (mirror the /run-tests and /create-pr slash commands so a
-    # bar click == the command). These have no scripted helper, so post inline.
     canned = {
         "run-tests": (":test_tube: Ran the test suite:\n• `unit` — *142 passed*\n"
                       "• `integration` — *38 passed*\n• `lint` — *clean*\n"
@@ -113,7 +183,22 @@ async def handle_code_channel_action(
         try:
             await client.chat_postMessage(channel=channel_id, markdown_text=canned)
         except Exception:
-            logger.exception("code_channel_action: canned post failed for key=%r", key)
+            logger.exception("context-bar action: canned post failed for key=%r", key)
         return
 
-    logger.info("code_channel_action: key=%r has no mapped action; logged only", key)
+    logger.info("context-bar action: key=%r has no mapped action; logged only", key)
+
+
+def register(app: AsyncApp) -> None:
+    """Register the context-bar catch-all slash-command listener.
+
+    MUST be called AFTER listeners/commands/__init__.py's register() in app.py
+    so Bolt tries the literal /patch, /create-pr, etc. handlers first and they
+    win — this catch-all only ever sees what's left over. Safe either way
+    thanks to the _ALREADY_REGISTERED guard inside handle_context_bar_command,
+    but correct ordering keeps every command on its own, intended code path.
+    """
+    try:
+        app.command(_CATCH_ALL_COMMAND_RE)(handle_context_bar_command)
+    except Exception:  # noqa: BLE001 — tolerate a Bolt version that rejects the matcher
+        pass

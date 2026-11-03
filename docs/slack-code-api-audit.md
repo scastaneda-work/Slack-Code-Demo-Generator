@@ -35,7 +35,7 @@ Sources:
 | `agents.sessions.rename` | [`agent/slackcode.py:148`](../agent/slackcode.py) `rename_session()` | Faithful |
 | `record_channel.record_type === "agent_channel"` (code-channel recognition) | [`agent/slackcode.py:657`](../agent/slackcode.py) `is_code_channel()` | Faithful — confirmed live: a channel never created via `agents.conversations.create` correctly returns `False` even post-auth-fix; a channel created via that API correctly returns `True`. |
 | `agents.conversations.listViews` envelope key | [`agent/slackcode.py:468`](../agent/slackcode.py) `views_from()` (renamed from private `_views_from`, used by `ensure_view_capacity()` and the probe) | **Bug found and fixed 2026-11-02.** The live response's array lives under `session_views`, not `views` or `agent_session_views` — the old fallback list checked only those two, so it silently returned `[]` against the real API. This broke view-cap enforcement (`ensure_view_capacity`) with no error, just silent non-enforcement. Fixed by adding `session_views` as the first-checked key. |
-| `code_channel_action` event (click on an `item_type: "action"` context-bar chip) | [`listeners/events/code_channel_action.py`](../listeners/events/code_channel_action.py) — dispatch handler exists and is registered/subscribed | **CONFIRMED LIVE 2026-11-02 — wrong hook entirely.** Clicking a context-bar `item_type: "action"` chip (key `probe-action`) does NOT fire `code_channel_action`. It dispatches as a Bolt `slash_commands` request with `command` set to `/` + the item's key (here `/probe-action`) — logged as `Unhandled request ({'type': None, 'command': '/probe-action'})` since no `@app.command("/probe-action")` handler exists. **The `code_channel_action.py` listener this repo ships is listening for the wrong event type and will never fire from a context-bar click.** To actually handle these, register `@app.command(re.compile(r".*"))` (or per-key `@app.command()`s) instead of (or in addition to) the current events-api `code_channel_action` subscription. Not yet fixed — flagged as a follow-up, since changing the dispatch mechanism touches the manifest's event subscriptions too. |
+| `code_channel_action` event (click on an `item_type: "action"` context-bar chip) | [`listeners/events/code_channel_action.py`](../listeners/events/code_channel_action.py) — catch-all `app.command()` listener (`handle_context_bar_command`, `register()`), plus the original `app.action()` catch-all kept for a future beta build that might use `block_actions`/`code_channel_action` instead | **CONFIRMED LIVE 2026-11-02, FIXED, AND RE-CONFIRMED LIVE.** Clicking a context-bar `item_type: "action"` chip does NOT fire `code_channel_action` — it dispatches as a Bolt `slash_commands` request with `command` set to `/` + the item's key. Fixed by adding `handle_context_bar_command`, a catch-all `app.command(re.compile(r"^/.+"))` registered in `listeners/__init__.py` AFTER `commands.register(app)` so the existing literal `/patch`, `/create-pr`, etc. handlers still win first (belt-and-suspenders `_ALREADY_REGISTERED` guard inside the handler too, mirroring every `/check-<label>` the scenario registry declares). Shares the same `_KEY_TO_ACTION` dispatch table as the original handler via a new `_dispatch_key()` helper. Re-tested live end-to-end against a fresh channel (`C0CF5CBMSD6`) with the running bot on this fixed code: log shows Bolt trying every literal handler first, none matching, then `handle_context_bar_command` running and correctly resolving `key='probe-action'` — no more 404 "Unhandled request." |
 | `chat.startStream` / `appendStream` / `stopStream` (live-text streaming) | Used throughout `listeners/events/slack_code.py` for the "thinking" pulse and streamed replies | Faithful — this is a stable, non-beta Web API surface; no doc-gap here |
 | Manifest `features.code_channels.enabled` + `slash_command_url` | [`manifest.json`](../manifest.json) — `enabled: true` declared; `slash_command_url` **not yet set** (the app runs Socket Mode, which the docs note as an alternative delivery path for runtime commands) | Faithful for this app's transport; `slash_command_url` is only needed for HTTP-mode apps |
 | Scope `code_channels:manage` | [`manifest.json`](../manifest.json) bot scopes | Faithful |
@@ -62,19 +62,26 @@ came back as a confirmed real bug, and a wrong-hook finding surfaced along the w
    survive (see table above). Fixed: the misleading docstring claim. Not yet fixed: the underlying
    whole-document-replace behavior (would need `canvases.sections.lookup` + a section-scoped
    `replace` — not built).
-2. ~~Confirm the real `code_channel_action` payload shape~~ — **done; the listener is wrong.** A
-   context-bar action click is a `slash_commands` request, not a `code_channel_action` event (see
-   table above). Not yet fixed: `listeners/events/code_channel_action.py` needs a `@app.command()`
-   registration, not (or in addition to) its current events-api subscription.
+2. ~~Confirm the real `code_channel_action` payload shape~~ — **done, fixed, AND re-confirmed
+   live.** A context-bar action click is a `slash_commands` request, not a `code_channel_action`
+   event (see table above). `listeners/events/code_channel_action.py` now also registers a
+   catch-all `app.command()` listener. Re-tested live against a fresh channel (`C0CF5CBMSD6`)
+   after the fix: Bolt tried every literal handler in order (`handle_check` ×5, `handle_patch`,
+   `handle_show_metrics`, `handle_make_recap`, `handle_create_pr`, `handle_run_tests`,
+   `handle_summarize`), none matched `/probe-action`, then correctly fell through to
+   `handle_context_bar_command`, which logged the raw payload and resolved `key='probe-action'`
+   — no more "Unhandled request" 404.
 3. ~~Exercise `suspended`/`closed` session statuses at least once~~ — **done; confirmed good.** A
    full `processing → suspended → active` cycle, then `closed` immediately before archiving, via
    `qa.py --probe --archive`, all returned `ok=True`.
 
-New follow-up found during this same live run (not one of the original three):
+New follow-up found during this same live run (not among the original three):
 
 4. **`listViews`' real envelope key is `session_views`**, not `views`/`agent_session_views` —
    **fixed** in `agent/slackcode.py` (`views_from()`, formerly private `_views_from()`). Confirm
    no other caller assumed the old (wrong) keys when touching this code again.
+
+All items above are now closed. Nothing outstanding from this audit as of 2026-11-02.
 
 ## Live verification
 
